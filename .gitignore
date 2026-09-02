@@ -1,0 +1,48 @@
+# ==================== Gradle ====================
+.gradle/
+.kotlin/
+**/build/
+build/
+
+# 构建产物 APK
+*.apk
+!app/src/**/*.apk
+
+# ==================== IDE ====================
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.DS_Store
+
+# ==================== Android ====================
+local.properties
+captures/
+.externalNativeBuild/
+.cxx/
+*.keystore
+*.jks
+!debug.keystore
+lint-results-debug.html
+
+# ==================== 本地环境 / 临时文件 ====================
+# 本机 SDK / JDK 路径（每台机器不同，不入库）
+local.properties
+
+# 逆向分析临时产物（APK 解包、jadx 反编译输出等，体积大且可再生）
+temp/
+apk/
+mihealth-reversed/
+tools/
+*.zip.tmp
+
+# 日志与导出
+logs/
+*.log
+
+# 系统/编辑器临时文件
+Thumbs.db
+*.swp
+*.swo
+*~
