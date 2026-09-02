@@ -220,7 +220,7 @@ object LlmClient {
         statsPusher.execute {
             try {
                 ctx.contentResolver.call(
-                    Uri.parse("content://${StatsContentProvider.AUTHORITY}"),
+                    Uri.Builder().scheme("content").authority(StatsContentProvider.AUTHORITY).build(),
                     StatsContentProvider.METHOD_PUSH,
                     payload,
                     null,

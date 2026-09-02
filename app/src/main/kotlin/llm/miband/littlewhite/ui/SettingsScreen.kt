@@ -6,9 +6,11 @@ import android.content.Context
 import android.graphics.Paint
 import android.widget.Toast
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -16,10 +18,16 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -29,26 +37,41 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import io.github.libxposed.service.HookedTarget
+import io.github.libxposed.service.XposedService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import llm.miband.littlewhite.LsposedBinding
 import llm.miband.littlewhite.config.ConfigStore
 import llm.miband.littlewhite.config.PresetManager
 import llm.miband.littlewhite.config.StatsStore
 import llm.miband.littlewhite.hook.LlmClient
 import llm.miband.littlewhite.log.LogCollector
+import llm.miband.littlewhite.ui.VisualPrefs
+import top.yukonga.miuix.kmp.basic.BasicComponent
+import top.yukonga.miuix.kmp.basic.Badge
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
+import top.yukonga.miuix.kmp.basic.FloatingNavigationBar
+import top.yukonga.miuix.kmp.basic.FloatingNavigationBarItem
 import top.yukonga.miuix.kmp.basic.Card
+import top.yukonga.miuix.kmp.basic.CardDefaults
+import top.yukonga.miuix.kmp.basic.HorizontalDivider
+import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.NavigationBar
 import top.yukonga.miuix.kmp.basic.NavigationBarItem
 import top.yukonga.miuix.kmp.basic.Scaffold
@@ -61,58 +84,155 @@ import top.yukonga.miuix.kmp.basic.VerticalScrollBar
 import top.yukonga.miuix.kmp.basic.rememberScrollBarAdapter
 import top.yukonga.miuix.kmp.interfaces.ExperimentalScrollBarApi
 import top.yukonga.miuix.kmp.icon.MiuixIcons
+import top.yukonga.miuix.kmp.icon.extended.Close
 import top.yukonga.miuix.kmp.icon.extended.Edit
+import top.yukonga.miuix.kmp.icon.extended.Home
 import top.yukonga.miuix.kmp.icon.extended.Info
+import top.yukonga.miuix.kmp.icon.extended.Ok
 import top.yukonga.miuix.kmp.icon.extended.Settings
 import top.yukonga.miuix.kmp.overlay.OverlayDialog
 import top.yukonga.miuix.kmp.theme.MiuixTheme
+import top.yukonga.miuix.kmp.theme.MiuixTheme.isDynamicColor
+import top.yukonga.miuix.kmp.theme.ThemeColorSpec
+import top.yukonga.miuix.kmp.theme.ThemePaletteStyle
 import top.yukonga.miuix.kmp.preference.ArrowPreference
 import top.yukonga.miuix.kmp.preference.OverlayDropdownPreference
 import top.yukonga.miuix.kmp.preference.SwitchPreference
+import top.yukonga.miuix.kmp.utils.PressFeedbackType
+import llm.miband.littlewhite.ui.BlurredBar
+import llm.miband.littlewhite.ui.LocalEnableBlur
+import llm.miband.littlewhite.ui.LocalEnableFloatingBar
+import llm.miband.littlewhite.ui.LocalEnableFloatingBarBlur
+import llm.miband.littlewhite.ui.LocalEnableNavigationBadge
+import llm.miband.littlewhite.ui.LocalPageScale
+import llm.miband.littlewhite.ui.rememberBlurBackdrop
 
 /**
- * 环上LLM —— 完整设置页（HyperOS 设计语言）。
+ * 环上LLM —— 完整设置页（参考 KernelSU Manager 设计风格）。
  *
- * @param config 可写配置存储；由 Activity 在 Xposed Service 绑定成功时注入。
- *               为 null 表示未检测到 LSPosed / Xposed Service，页面显示提示。
+ * 4 个 Tab 通过 HorizontalPager 左右滑动切换：
+ * 0=状态 1=配置 2=统计 3=关于
+ *
+ * @param binding LSPosed Service 绑定信息；为 null 表示未检测到框架，显示提示
+ * @param onThemeModeChange 主题模式变更回调（持久化 + 驱动 AppTheme 重建）
+ * @param onKeyColorChange Monet 种子色变更回调
+ * @param onPaletteStyleChange 调色板风格变更回调
+ * @param onColorSpecChange 动态取色规范变更回调
  */
 @Composable
-fun SettingsScreen(config: ConfigStore?) {
+fun SettingsScreen(
+    binding: LsposedBinding?,
+    onThemeModeChange: (String) -> Unit = {},
+    onKeyColorChange: (Long) -> Unit = {},
+    onPaletteStyleChange: (ThemePaletteStyle) -> Unit = {},
+    onColorSpecChange: (ThemeColorSpec) -> Unit = {},
+    onMiuixMonetChange: (Boolean) -> Unit = {},
+    onVisualPrefsChange: (VisualPrefs) -> Unit = {},
+) {
     val context = LocalContext.current
-    // 初始化预设数据层与统计持久化层（幂等，重复调用仅重新赋值 SharedPreferences 引用）
     PresetManager.init(context)
     StatsStore.init(context)
     val scope = rememberCoroutineScope()
 
-    // 底部 Tab 切换状态：0=配置 1=统计 2=关于
-    var selectedTab by remember { mutableStateOf(0) }
+    var showThemePage by remember { mutableStateOf(false) }
+
+    val config = binding?.config
+
+    // 主题设置页需要 config 才能操作
+    if (showThemePage && config != null) {
+        ThemeSettingsScreen(
+            config = config,
+            onBack = { showThemePage = false },
+            onThemeModeChange = onThemeModeChange,
+            onKeyColorChange = onKeyColorChange,
+            onPaletteStyleChange = onPaletteStyleChange,
+            onColorSpecChange = onColorSpecChange,
+            onMiuixMonetChange = onMiuixMonetChange,
+            onVisualPrefsChange = onVisualPrefsChange,
+        )
+        return
+    }
+
+    val pagerState = rememberPagerState(initialPage = 0) { 4 }
+
+    data class TabInfo(val label: String, val icon: ImageVector)
+    val tabs = listOf(
+        TabInfo("状态", MiuixIcons.Home),
+        TabInfo("配置", MiuixIcons.Settings),
+        TabInfo("统计", MiuixIcons.Info),
+        TabInfo("关于", MiuixIcons.Edit),
+    )
+
+    // 视觉效果（从 CompositionLocal 读取，由 SettingsActivity 提供）
+    val enableBlur = LocalEnableBlur.current
+    val enableFloatingBar = LocalEnableFloatingBar.current
+    val enableFloatingBarBlur = LocalEnableFloatingBarBlur.current
+    val enableNavBadge = LocalEnableNavigationBadge.current
+    val pageScale = LocalPageScale.current
+    val backdrop = rememberBlurBackdrop(enableBlur)
+    val blurActive = backdrop != null
+    val barColor = if (blurActive) Color.Transparent else MiuixTheme.colorScheme.surface
 
     Scaffold(
         topBar = {
-            SmallTopAppBar(title = "环上LLM")
+            if (blurActive) {
+                BlurredBar(backdrop) {
+                    SmallTopAppBar(title = "环上LLM", color = barColor)
+                }
+            } else {
+                SmallTopAppBar(title = "环上LLM")
+            }
         },
         bottomBar = {
-            // HyperOS 风格底部导航栏
-            NavigationBar {
-                NavigationBarItem(
-                    selected = selectedTab == 0,
-                    onClick = { selectedTab = 0 },
-                    icon = MiuixIcons.Settings,
-                    label = "配置",
-                )
-                NavigationBarItem(
-                    selected = selectedTab == 1,
-                    onClick = { selectedTab = 1 },
-                    icon = MiuixIcons.Info,
-                    label = "统计",
-                )
-                NavigationBarItem(
-                    selected = selectedTab == 2,
-                    onClick = { selectedTab = 2 },
-                    icon = MiuixIcons.Edit,
-                    label = "关于",
-                )
-            }
+            if (enableFloatingBar) {
+                // 悬浮胶囊底部导航栏（玻璃效果时透明 + 模糊）
+                if (enableFloatingBarBlur && blurActive) {
+                    BlurredBar(backdrop, blurActive = enableFloatingBarBlur) {
+                        FloatingNavigationBar(color = Color.Transparent) {
+                            tabs.forEachIndexed { i, tab ->
+                                FloatingNavigationBarItem(
+                                    selected = pagerState.currentPage == i,
+                                    onClick = { scope.launch { pagerState.animateScrollToPage(i) } },
+                                    icon = tab.icon,
+                                    label = tab.label,
+                                )
+                            }
+                        }
+                    }
+                } else {
+                    FloatingNavigationBar {
+                        tabs.forEachIndexed { i, tab ->
+                            FloatingNavigationBarItem(
+                                selected = pagerState.currentPage == i,
+                                onClick = { scope.launch { pagerState.animateScrollToPage(i) } },
+                                icon = tab.icon,
+                                label = tab.label,
+                            )
+                        }
+                    }
+                }
+            } else {
+                 NavigationBar {
+                     tabs.forEachIndexed { i, tab ->
+                         NavigationBarItem(
+                             selected = pagerState.currentPage == i,
+                             onClick = { scope.launch { pagerState.animateScrollToPage(i) } },
+                             icon = tab.icon,
+                             label = tab.label,
+                             badge = {
+                                 if (enableNavBadge && i == 0) {
+                                     // 状态 Tab 显示连接状态角标
+                                     val badgeColor = if (binding != null) Color(0xFF4CAF50) else Color(0xFF9E9E9E)
+                                     Badge(
+                                         containerColor = badgeColor,
+                                         modifier = Modifier.size(8.dp),
+                                     )
+                                 }
+                             },
+                         )
+                     }
+                 }
+             }
         },
     ) { innerPadding ->
         val contentPadding = PaddingValues(
@@ -120,41 +240,359 @@ fun SettingsScreen(config: ConfigStore?) {
             bottom = innerPadding.calculateBottomPadding() + 12.dp,
         )
 
-        // 未绑定到 Xposed Service 时显示提示，不展示任何配置控件
-        if (config == null) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(contentPadding),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    text = "未检测到 LSPosed / Xposed Service\n请在 LSPosed 管理器中启用本模块后重试",
-                    textAlign = TextAlign.Center,
-                )
+        // 页面缩放：包裹 Pager 内容
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    scaleX = pageScale
+                    scaleY = pageScale
+                },
+        ) {
+            HorizontalPager(state = pagerState) { page ->
+                when (page) {
+                    0 -> StatusTabContent(binding = binding, context = context, contentPadding = contentPadding)
+                    1 -> ConfigTabContent(config = config, context = context, scope = scope, contentPadding = contentPadding)
+                    2 -> StatsTabContent(context = context, scope = scope, contentPadding = contentPadding)
+                    3 -> AboutTabContent(config = config, context = context, scope = scope, contentPadding = contentPadding, onOpenThemePage = { showThemePage = true })
+                }
             }
-            return@Scaffold
-        }
-
-        // 按底部 Tab 切换内容
-        when (selectedTab) {
-            0 -> ConfigTabContent(config = config, context = context, scope = scope, contentPadding = contentPadding)
-            1 -> StatsTabContent(context = context, scope = scope, contentPadding = contentPadding)
-            else -> AboutTabContent(config = config, context = context, scope = scope, contentPadding = contentPadding)
         }
     }
 }
 
+// ====================================================================
+// Tab 0：状态 —— LSPosed 连接状态总览（参考 KernelSU StatusCard 设计）
+// ====================================================================
+
 /**
- * Tab 0：配置 —— 基本设置（API）+ 生成参数 + 会话设置，各分组含预设管理。
+ * 状态页 —— 展示 LSPosed 框架连接状态、模块作用域、目标进程 Hook 状态。
+ * 参考 KernelSU HomePager 的 StatusCard + InfoCard 设计风格。
+ */
+@Composable
+private fun StatusTabContent(
+    binding: LsposedBinding?,
+    context: Context,
+    contentPadding: PaddingValues,
+) {
+    val service = binding?.service
+    val listState = rememberLazyListState()
+
+    // 异常容错读取框架信息（未绑定时为默认占位）
+    val frameworkName = remember { runCatching { service?.frameworkName }.getOrNull() ?: "LSPosed" }
+    val frameworkVersion = remember { runCatching { service?.frameworkVersion }.getOrNull() ?: "?" }
+    val frameworkVersionCode = remember { runCatching { service?.frameworkVersionCode }.getOrNull() ?: 0L }
+    val scope = remember { runCatching { service?.scope }.getOrNull() ?: emptyList() }
+    val targets = remember { runCatching { service?.runningTargets }.getOrNull() ?: emptyList() }
+    val targetInScope = scope.any { it.equals("com.mi.health", ignoreCase = true) }
+    val miHealthTarget = targets.firstOrNull { it.processName.contains("com.mi.health") }
+
+    // 是否已激活（Service 绑定成功）
+    val activated = binding != null
+
+    // 配色（参考 KernelSU StatusCard）：未激活用红色系，激活用绿色系
+    val cardBg = when {
+        !activated -> if (isDynamicColor) MiuixTheme.colorScheme.errorContainer else Color(0xFFF8D7DA)
+        isDynamicColor -> MiuixTheme.colorScheme.secondaryContainer
+        else -> Color(0xFFDFFAE4)
+    }
+    val cardFg = when {
+        !activated -> if (isDynamicColor) MiuixTheme.colorScheme.onErrorContainer else Color(0xFF8B1A1A)
+        isDynamicColor -> MiuixTheme.colorScheme.onSecondaryContainer
+        else -> Color(0xFF1A3825)
+    }
+    val tagColor = MiuixTheme.colorScheme.secondaryContainer
+    val tagTextColor = MiuixTheme.colorScheme.onSecondaryContainer
+
+    Box {
+        LazyColumn(state = listState, contentPadding = contentPadding) {
+            // ---------- 主状态卡片（参考 KernelSU StatusCard） ----------
+            item(key = "statusCard") {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(IntrinsicSize.Min),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp),
+                        colors = CardDefaults.defaultColors(color = cardBg),
+                        onClick = {
+                            // 点击卡片尝试打开 LSPosed 管理器
+                            runCatching {
+                                val intent = context.packageManager.getLaunchIntentForPackage("org.lsposed.manager")
+                                if (intent != null) context.startActivity(intent)
+                            }
+                        },
+                        showIndication = true,
+                        pressFeedbackType = PressFeedbackType.Tilt,
+                    ) {
+                        Box {
+                            // 右下角大图标（参考 KernelSU：110dp 对勾/叉号，右下偏移）
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .offset(27.dp, 31.dp),
+                                contentAlignment = Alignment.BottomEnd,
+                            ) {
+                                Icon(
+                                    modifier = Modifier.size(110.dp),
+                                    imageVector = if (activated) MiuixIcons.Ok else MiuixIcons.Close,
+                                    tint = if (!activated) {
+                                        if (isDynamicColor) MiuixTheme.colorScheme.error.copy(alpha = 0.8f) else Color(0xFFE53935)
+                                    } else if (isDynamicColor) {
+                                        MiuixTheme.colorScheme.primary.copy(alpha = 0.8f)
+                                    } else {
+                                        Color(0xFF36D167)
+                                    },
+                                    contentDescription = null,
+                                )
+                            }
+                            // 左下角工作模式标签（参考 KernelSU workingMode）
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(16.dp, 10.dp),
+                                contentAlignment = Alignment.BottomStart,
+                            ) {
+                                Text(
+                                    text = if (activated) "LSPosed" else "未激活",
+                                    fontSize = 16.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = cardFg,
+                                )
+                            }
+                            // 左上角标题 + 版本
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(16.dp, 14.dp),
+                                contentAlignment = Alignment.TopStart,
+                            ) {
+                                Column {
+                                    Text(
+                                        text = if (activated) "已连接 LSPosed" else "LSPosed 未激活",
+                                        fontSize = 22.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = cardFg,
+                                    )
+                                    Spacer(modifier = Modifier.height(1.dp))
+                                    Text(
+                                        text = if (activated) "$frameworkName · $frameworkVersion"
+                                        else "请在 LSPosed 管理器中启用本模块",
+                                        fontSize = 15.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = cardFg,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ---------- 框架信息卡片 ----------
+            item(key = "frameworkTitle") {
+                Spacer(modifier = Modifier.height(8.dp))
+                SmallTitle("框架信息")
+            }
+            item(key = "framework") {
+                Card(modifier = Modifier.padding(horizontal = 12.dp)) {
+                    InfoRow(
+                        label = "框架名称",
+                        value = frameworkName,
+                        tag = "LSPosed",
+                        tagBg = tagColor,
+                        tagFg = tagTextColor,
+                    )
+                    HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+                    InfoRow(
+                        label = "框架版本",
+                        value = "$frameworkVersion (code $frameworkVersionCode)",
+                        tag = frameworkVersion,
+                        tagBg = tagColor,
+                        tagFg = tagTextColor,
+                    )
+                    HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+                    InfoRow(
+                        label = "目标应用",
+                        value = "com.mi.health",
+                        tag = if (targetInScope) "已勾选" else "未勾选",
+                        tagBg = if (targetInScope) MiuixTheme.colorScheme.primaryContainer else MiuixTheme.colorScheme.errorContainer,
+                        tagFg = if (targetInScope) MiuixTheme.colorScheme.onPrimaryContainer else MiuixTheme.colorScheme.onErrorContainer,
+                    )
+                }
+            }
+            // ---------- Hook 运行状态卡片 ----------
+            item(key = "hookTitle") {
+                Spacer(modifier = Modifier.height(8.dp))
+                SmallTitle("Hook 运行状态")
+            }
+            item(key = "hook") {
+                Card(modifier = Modifier.padding(horizontal = 12.dp)) {
+                    val targetInfo = miHealthTarget
+                    val statusText = when {
+                        targetInfo == null -> "未运行"
+                        targetInfo.state == HookedTarget.State.UP_TO_DATE -> "运行中 · 已加载"
+                        targetInfo.state == HookedTarget.State.STALE -> "运行中 · 需重载"
+                        targetInfo.state == HookedTarget.State.RELOADING -> "重载中"
+                        targetInfo.state == HookedTarget.State.FAILED -> "加载失败"
+                        else -> "未知"
+                    }
+                    val statusColor = when {
+                        targetInfo == null -> MiuixTheme.colorScheme.errorContainer
+                        targetInfo.state == HookedTarget.State.UP_TO_DATE -> MiuixTheme.colorScheme.primaryContainer
+                        else -> MiuixTheme.colorScheme.tertiaryContainer
+                    }
+                    InfoRow(
+                        label = "com.mi.health",
+                        value = "[pid=${targetInfo?.pid ?: "?"}]",
+                        tag = statusText,
+                        tagBg = statusColor,
+                        tagFg = MiuixTheme.colorScheme.onPrimaryContainer,
+                    )
+                    if (targetInfo != null) {
+                        HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+                        InfoRow(
+                            label = "模块版本",
+                            value = "v${targetInfo.loadedVersionCode}",
+                            tag = "loaded",
+                            tagBg = tagColor,
+                            tagFg = tagTextColor,
+                        )
+                    }
+                }
+            }
+
+            // ---------- 快速操作 ----------
+            item(key = "quickTitle") {
+                Spacer(modifier = Modifier.height(8.dp))
+                SmallTitle("快速操作")
+            }
+            item(key = "quick") {
+                Card(modifier = Modifier.padding(horizontal = 12.dp)) {
+                    ArrowPreference(
+                        title = "打开 LSPosed 管理器",
+                        summary = "管理模块作用域与查看运行状态",
+                        onClick = {
+                            // 尝试打开 LSPosed 管理器（org.lsposed.manager）
+                            runCatching {
+                                val intent = context.packageManager.getLaunchIntentForPackage("org.lsposed.manager")
+                                if (intent != null) context.startActivity(intent)
+                            }
+                        },
+                    )
+                }
+            }
+
+            item(key = "bottomSpacer") {
+                Spacer(modifier = Modifier.height(12.dp))
+            }
+        }
+
+        VerticalScrollBar(
+            adapter = rememberScrollBarAdapter(listState),
+            modifier = Modifier
+                .align(Alignment.CenterEnd)
+                .fillMaxHeight(),
+            trackPadding = contentPadding,
+        )
+    }
+}
+
+/** 信息行：标签 + 值 + 状态标签 */
+@Composable
+private fun InfoRow(
+    label: String,
+    value: String,
+    tag: String,
+    tagBg: Color,
+    tagFg: Color,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = label,
+            fontSize = MiuixTheme.textStyles.body2.fontSize,
+            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            text = value,
+            fontSize = MiuixTheme.textStyles.body2.fontSize,
+            color = MiuixTheme.colorScheme.onSurface,
+            modifier = Modifier
+                .padding(end = 8.dp)
+                .weight(1f),
+            maxLines = 1,
+        )
+        StatusTag(
+            label = tag,
+            backgroundColor = tagBg,
+            contentColor = tagFg,
+        )
+    }
+}
+
+/** 小圆角状态标签（参考 KernelSU StatusTagMiuix：圆角 6dp，9sp 字体） */
+@Composable
+private fun StatusTag(
+    label: String,
+    backgroundColor: Color,
+    contentColor: Color,
+) {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(6.dp))
+            .background(backgroundColor)
+            .padding(horizontal = 6.dp, vertical = 2.dp),
+    ) {
+        Text(
+            text = label,
+            fontSize = 9.sp,
+            fontWeight = FontWeight(750),
+            color = contentColor,
+        )
+    }
+}
+
+// ====================================================================
+// Tab 1：配置 —— 基本设置（API）+ 生成参数 + 会话设置 + 主题设置
+// ====================================================================
+
+/**
+ * Tab 1：配置 —— 基本设置（API）+ 生成参数 + 会话设置，各分组含预设管理。
  */
 @Composable
 private fun ConfigTabContent(
-    config: ConfigStore,
+    config: ConfigStore?,
     context: Context,
     scope: kotlinx.coroutines.CoroutineScope,
     contentPadding: PaddingValues,
 ) {
+    // 未激活（无 Service）时显示占位提示
+    if (config == null) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(contentPadding),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = "LSPosed 未激活\n请在 LSPosed 管理器中启用本模块后\n配置 API 参数",
+                textAlign = TextAlign.Center,
+                fontSize = MiuixTheme.textStyles.body2.fontSize,
+                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+            )
+        }
+        return
+    }
     val listState = rememberLazyListState()
     Box {
         LazyColumn(
@@ -326,7 +764,7 @@ private fun ConfigTabContent(
             }
         }
 
-        // 右侧纵向滚动条（HyperOS 风格），跟随 LazyColumn 滚动
+        // 右侧纵向滚动条
         VerticalScrollBar(
             adapter = rememberScrollBarAdapter(listState),
             modifier = Modifier
@@ -337,8 +775,12 @@ private fun ConfigTabContent(
     }
 }
 
+// ====================================================================
+// Tab 2：统计 —— API 调用记录与 token 用量
+// ====================================================================
+
 /**
- * Tab 1：统计 —— API 调用记录与 token 用量（持久化存储）。
+ * Tab 2：统计 —— API 调用记录与 token 用量（持久化存储）。
  */
 @Composable
 private fun StatsTabContent(
@@ -359,7 +801,6 @@ private fun StatsTabContent(
                 Card(modifier = Modifier.padding(horizontal = 12.dp)) {
                     var statsRefresh by remember { mutableStateOf(0) }
                     key(statsRefresh) {
-                        // 数据源为持久化统计（模块 App 进程 SharedPreferences，重启后仍保留）
                         val stats = StatsStore.readCallStats()
                         Text(
                             text = "总调用 ${stats.totalCalls} 次 · 失败 ${stats.totalFailures} 次",
@@ -372,7 +813,6 @@ private fun StatsTabContent(
                             fontSize = MiuixTheme.textStyles.body2.fontSize,
                             color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                         )
-                        // Token 用量可视化柱状图（最近最多 10 次调用）
                         if (stats.recentCalls.isNotEmpty()) {
                             TokenBarChart(calls = stats.recentCalls)
                         }
@@ -384,7 +824,6 @@ private fun StatsTabContent(
                                 color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                             )
                         } else {
-                            // 最近 5 条调用记录
                             stats.recentCalls.take(5).forEach { call ->
                                 val time = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US)
                                     .format(java.util.Date(call.timestamp))
@@ -401,7 +840,7 @@ private fun StatsTabContent(
                     }
                     ArrowPreference(
                         title = "刷新统计",
-                        summary = "重新读取持久化统计（设置页进程内保存，重启后保留）",
+                        summary = "重新读取持久化统计",
                         onClick = { statsRefresh++ },
                     )
                     ArrowPreference(
@@ -422,7 +861,6 @@ private fun StatsTabContent(
             }
         }
 
-        // 右侧纵向滚动条
         VerticalScrollBar(
             adapter = rememberScrollBarAdapter(listState),
             modifier = Modifier
@@ -433,16 +871,38 @@ private fun StatsTabContent(
     }
 }
 
+// ====================================================================
+// Tab 3：关于 —— 日志导出 + 测试连接 + 版本信息
+// ====================================================================
+
 /**
- * Tab 2：关于 —— 日志导出 + 测试连接 + 版本信息。
+ * Tab 3：关于 —— 日志导出 + 测试连接 + 主题设置入口 + 版本信息。
  */
 @Composable
 private fun AboutTabContent(
-    config: ConfigStore,
+    config: ConfigStore?,
     context: Context,
     scope: kotlinx.coroutines.CoroutineScope,
     contentPadding: PaddingValues,
+    onOpenThemePage: () -> Unit,
 ) {
+    // 未激活（无 Service）时显示占位提示
+    if (config == null) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(contentPadding),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = "LSPosed 未激活\n请在 LSPosed 管理器中启用本模块",
+                textAlign = TextAlign.Center,
+                fontSize = MiuixTheme.textStyles.body2.fontSize,
+                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+            )
+        }
+        return
+    }
     val listState = rememberLazyListState()
     Box {
         LazyColumn(
@@ -488,9 +948,8 @@ private fun AboutTabContent(
                         onClick = {
                             testing = true
                             scope.launch(Dispatchers.IO) {
-                                // 确保 LlmClient 已注入当前配置再发起请求
                                 LlmClient.init(config)
-                                val result = LlmClient.ask("settings-connection-test", "连接测试：请回答“连接成功”")
+                                val result = LlmClient.ask("settings-connection-test", "连接测试：请回答连接成功")
                                 withContext(Dispatchers.Main) {
                                     testing = false
                                     val msg = if (result.isNullOrBlank()) {
@@ -512,12 +971,25 @@ private fun AboutTabContent(
                 }
             }
 
+            // ---------- 分组 3：主题设置入口（KSU 风格独立页面） ----------
+            item(key = "themeTitle") {
+                SmallTitle("主题设置")
+            }
+            item(key = "theme") {
+                Card(modifier = Modifier.padding(horizontal = 12.dp)) {
+                    ArrowPreference(
+                        title = "设置主题",
+                        summary = "主题模式 / 动态取色 / 种子色 / 调色板风格 / 视觉效果",
+                        onClick = onOpenThemePage,
+                    )
+                }
+            }
+
             item(key = "bottomSpacer") {
                 Spacer(modifier = Modifier.height(12.dp))
             }
         }
 
-        // 右侧纵向滚动条
         VerticalScrollBar(
             adapter = rememberScrollBarAdapter(listState),
             modifier = Modifier
@@ -528,14 +1000,12 @@ private fun AboutTabContent(
     }
 }
 
+// ====================================================================
+// 预设管理 —— 每组配置 Card 底部复用的预设保存/应用/删除区块
+// ====================================================================
+
 /**
  * 预设管理区块（每个可配置分组 Card 末尾复用）。
- *
- * 提供三行操作：
- * 1. 下拉选择已有预设并应用到当前分组；
- * 2. 将当前分组配置命名保存为预设；
- * 3. 删除所选预设。
- * 应用预设后通过 [onPresetApplied] 通知调用方刷新配置输入控件（递增 refreshTick）。
  */
 @Composable
 private fun PresetSection(
@@ -558,7 +1028,6 @@ private fun PresetSection(
         items = presets.ifEmpty { listOf("(无预设)") },
         selectedIndex = maxOf(presets.indexOf(selected), 0),
         onSelectedIndexChange = { index ->
-            // 仅当点击的是真实预设时才加载应用（占位 "(无预设)" 不处理）
             if (hasPresets && index in presets.indices) {
                 val name = presets[index]
                 selected = name
@@ -633,10 +1102,11 @@ private fun PresetSection(
     }
 }
 
-/** 单行文本输入：Base URL / 模型 等字符串配置。
- *  内部用 remember 持有本地输入状态（受控组件直接绑定 config 不会触发重组，
- *  会导致输入即被旧值覆盖、无法输入），输入时同步写回配置。
- */
+// ====================================================================
+// 输入组件 —— 自定义文本/数字/可空输入框
+// ====================================================================
+
+/** 单行文本输入：Base URL / 模型 等字符串配置 */
 @Composable
 private fun TextInputField(
     initialValue: String,
@@ -650,7 +1120,7 @@ private fun TextInputField(
     TextField(
         value = text,
         onValueChange = { input ->
-            text = input // 先更新本地状态，保证输入可见
+            text = input
             onValueChange(input)
         },
         label = effectiveLabel,
@@ -662,7 +1132,7 @@ private fun TextInputField(
     )
 }
 
-/** API Key 输入：普通文本输入，内部持有本地状态 */
+/** API Key 输入 */
 @Composable
 private fun ApiKeyField(
     initialValue: String,
@@ -683,7 +1153,7 @@ private fun ApiKeyField(
     )
 }
 
-/** 数字输入：超时 / Token / 会话等必填整型配置，输入可解析时即时写入 */
+/** 数字输入：超时 / Token / 会话等必填整型配置 */
 @Composable
 private fun NumberInputField(
     label: String,
@@ -705,10 +1175,7 @@ private fun NumberInputField(
     )
 }
 
-/**
- * 可空整数输入：留空表示未设置（null，使用 API 默认值）。
- * 仅当输入可解析为整数时才写回；清空则写入 null。
- */
+/** 可空整数输入：留空表示未设置（null，使用 API 默认值） */
 @Composable
 private fun NullableIntInputField(
     label: String,
@@ -721,7 +1188,7 @@ private fun NullableIntInputField(
         onValueChange = { input ->
             text = input
             if (input.isBlank()) {
-                onValueChange(null) // 留空 -> 使用 API 默认值
+                onValueChange(null)
             } else {
                 input.toIntOrNull()?.let { onValueChange(it) }
             }
@@ -734,10 +1201,7 @@ private fun NullableIntInputField(
     )
 }
 
-/**
- * 可空小数输入（温度 / Top P）：留空表示未设置（null，使用 API 默认值）。
- * 仅当输入可解析为浮点数时才写回；清空则写入 null。
- */
+/** 可空小数输入（温度 / Top P）：留空表示未设置（null，使用 API 默认值） */
 @Composable
 private fun DecimalInputField(
     label: String,
@@ -750,7 +1214,7 @@ private fun DecimalInputField(
         onValueChange = { input ->
             text = input
             if (input.isBlank()) {
-                onValueChange(null) // 留空 -> 使用 API 默认值
+                onValueChange(null)
             } else {
                 input.toFloatOrNull()?.let { onValueChange(it) }
             }
@@ -763,13 +1227,12 @@ private fun DecimalInputField(
     )
 }
 
+// ====================================================================
+// Token 柱状图 —— 统计页可视化组件
+// ====================================================================
+
 /**
  * Token 用量柱状图 —— 展示最近若干次调用的输入（prompt）/ 输出（completion）token 占比。
- *
- * 使用 Compose Canvas 手绘堆叠柱状图：
- * - X 轴：最近 [maxBars] 次调用（不足则全量），柱下标时间 HH:mm
- * - Y 轴：token 数量（自动按最大值取整刻度）
- * - 每根柱下半为输入 token（主题主色），上半为输出 token（辅助色），失败调用整体置灰
  */
 @Composable
 private fun TokenBarChart(
@@ -778,15 +1241,12 @@ private fun TokenBarChart(
 ) {
     if (calls.isEmpty()) return
 
-    // 取最近 maxBars 条，时间升序排列（最旧在左）
     val data = calls.takeLast(maxBars)
     val maxToken = (data.maxOfOrNull { it.promptTokens + it.completionTokens } ?: 1).coerceAtLeast(1)
 
-    // Y 轴刻度：向上取整到 10 的倍数，至少 10，最多显示 4 档
     val yStep = ((maxToken / 4).coerceAtLeast(1) + 9) / 10 * 10
     val yMax = yStep * 4
 
-    // 主题色（跟随 Miuix 深浅色）
     val promptColor = MiuixTheme.colorScheme.primary
     val completionColor = MiuixTheme.colorScheme.primaryContainer
     val failureColor = MiuixTheme.colorScheme.onSurfaceVariantSummary.copy(alpha = 0.4f)
@@ -798,7 +1258,6 @@ private fun TokenBarChart(
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 8.dp),
     ) {
-        // 图例
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(16.dp),
@@ -810,19 +1269,17 @@ private fun TokenBarChart(
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        // 图表主体：高度 180dp
         Canvas(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(180.dp),
         ) {
-            val leftPad = 44.dp.toPx()   // 左侧留出 Y 轴刻度文字
-            val bottomPad = 22.dp.toPx() // 底部留出 X 轴时间文字
+            val leftPad = 44.dp.toPx()
+            val bottomPad = 22.dp.toPx()
             val topPad = 8.dp.toPx()
             val chartW = size.width - leftPad
             val chartH = size.height - bottomPad - topPad
 
-            // Y 轴刻度文字（原生 Paint 绘制）
             val textPaint = Paint().apply {
                 color = textColor.toArgb()
                 textSize = 10.sp.toPx()
@@ -846,12 +1303,10 @@ private fun TokenBarChart(
                 )
             }
 
-            // 柱状图
             val barCount = data.size
             val slotW = chartW / barCount
             val barW = (slotW * 0.6f).coerceAtMost(36.dp.toPx())
 
-            // X 轴时间标签（柱下方，居中）
             val timePaint = Paint().apply {
                 color = textColor.toArgb()
                 textSize = 9.sp.toPx()
@@ -865,14 +1320,12 @@ private fun TokenBarChart(
                 val bottom = topPad + chartH
 
                 if (!call.success) {
-                    // 失败调用：整柱置灰
                     drawRect(
                         color = failureColor,
                         topLeft = Offset(x, bottom - barH),
                         size = androidx.compose.ui.geometry.Size(barW, barH),
                     )
                 } else {
-                    // 输入 token（下半）
                     val promptH = if (call.promptTokens > 0) (call.promptTokens.toFloat() / yMax) * chartH else 0f
                     val completionH = if (call.completionTokens > 0) (call.completionTokens.toFloat() / yMax) * chartH else 0f
                     drawRect(
@@ -887,7 +1340,6 @@ private fun TokenBarChart(
                     )
                 }
 
-                // 时间标签
                 val time = java.text.SimpleDateFormat("HH:mm", java.util.Locale.US)
                     .format(java.util.Date(call.timestamp))
                 drawContext.canvas.nativeCanvas.drawText(
@@ -898,7 +1350,6 @@ private fun TokenBarChart(
                 )
             }
 
-            // 边框线
             drawRect(
                 color = gridColor,
                 topLeft = Offset(leftPad, topPad),
@@ -913,13 +1364,14 @@ private fun TokenBarChart(
 @Composable
 private fun LegendDot(color: Color, label: String) {
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Canvas(modifier = Modifier.height(10.dp).padding(horizontal = 0.dp)) {
+        Canvas(modifier = Modifier
+            .size(10.dp)
+            .padding(0.dp)) {
             drawCircle(color = color, radius = 4.dp.toPx())
         }
-        Spacer(modifier = Modifier.height(0.dp))
+        Spacer(modifier = Modifier.width(6.dp))
         Text(
             text = label,
-            modifier = Modifier.padding(start = 6.dp),
             fontSize = MiuixTheme.textStyles.body2.fontSize,
             color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
         )

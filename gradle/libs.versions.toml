@@ -24,6 +24,7 @@ libxposed-service = { module = "io.github.libxposed:service", version.ref = "lib
 miuix-ui = { module = "top.yukonga.miuix.kmp:miuix-ui-android", version.ref = "miuix" }
 miuix-preference = { module = "top.yukonga.miuix.kmp:miuix-preference-android", version.ref = "miuix" }
 miuix-icons = { module = "top.yukonga.miuix.kmp:miuix-icons-android", version.ref = "miuix" }
+miuix-blur = { module = "top.yukonga.miuix.kmp:miuix-blur-android", version.ref = "miuix" }
 
 # ---- Compose（与 Miuix 同源使用 JetBrains Compose Multiplatform 制品，Android 目标实际提供 androidx.compose.* 类）----
 compose-runtime = { module = "org.jetbrains.compose.runtime:runtime", version.ref = "composeMultiplatform" }

@@ -127,6 +127,95 @@ class ConfigStore private constructor(private val prefs: SharedPreferences) {
     fun getMaxTokens(): Int =
         prefs.getInt(ConfigKeys.KEY_MAX_TOKENS, ConfigKeys.DEFAULT_MAX_TOKENS)
 
+    // ==================== 主题设置 ====================
+
+    /** 主题模式（与 Miuix ColorSchemeMode 枚举名对应，String 存储） */
+    fun getThemeMode(): String =
+        prefs.getString(ConfigKeys.KEY_THEME_MODE, ConfigKeys.DEFAULT_THEME_MODE)
+            ?: ConfigKeys.DEFAULT_THEME_MODE
+
+    fun setThemeMode(mode: String) {
+        prefs.edit().putString(ConfigKeys.KEY_THEME_MODE, mode).apply()
+    }
+
+    /** Monet 种子色（ARGB Int，0 = 跟随系统壁纸） */
+    fun getKeyColor(): Long =
+        prefs.getLong(ConfigKeys.KEY_KEY_COLOR, ConfigKeys.DEFAULT_KEY_COLOR)
+
+    fun setKeyColor(color: Long) {
+        prefs.edit().putLong(ConfigKeys.KEY_KEY_COLOR, color).apply()
+    }
+
+    /** 调色板风格（TonalSpot / Neutral / Vibrant / Expressive 等） */
+    fun getPaletteStyle(): String =
+        prefs.getString(ConfigKeys.KEY_PALETTE_STYLE, ConfigKeys.DEFAULT_PALETTE_STYLE)
+            ?: ConfigKeys.DEFAULT_PALETTE_STYLE
+
+    fun setPaletteStyle(style: String) {
+        prefs.edit().putString(ConfigKeys.KEY_PALETTE_STYLE, style).apply()
+    }
+
+    /** 动态取色规范（Spec2021 / Spec2025） */
+    fun getColorSpec(): String =
+        prefs.getString(ConfigKeys.KEY_COLOR_SPEC, ConfigKeys.DEFAULT_COLOR_SPEC)
+            ?: ConfigKeys.DEFAULT_COLOR_SPEC
+
+    fun setColorSpec(spec: String) {
+        prefs.edit().putString(ConfigKeys.KEY_COLOR_SPEC, spec).apply()
+    }
+
+    // ==================== 视觉效果（移植 KSU ColorPalette） ====================
+
+    /** Monet 动态取色总开关（KSU 风格：关闭时 themeMode 回退非 Monet 系列） */
+    fun isMiuixMonet(): Boolean =
+        prefs.getBoolean(ConfigKeys.KEY_MIUIX_MONET, ConfigKeys.DEFAULT_MIUIX_MONET)
+
+    fun setMiuixMonet(v: Boolean) {
+        prefs.edit().putBoolean(ConfigKeys.KEY_MIUIX_MONET, v).apply()
+    }
+
+    fun isEnableBlur(): Boolean =
+        prefs.getBoolean(ConfigKeys.KEY_ENABLE_BLUR, ConfigKeys.DEFAULT_ENABLE_BLUR)
+
+    fun setEnableBlur(v: Boolean) {
+        prefs.edit().putBoolean(ConfigKeys.KEY_ENABLE_BLUR, v).apply()
+    }
+
+    fun isFloatingBottomBar(): Boolean =
+        prefs.getBoolean(ConfigKeys.KEY_FLOATING_BOTTOM_BAR, ConfigKeys.DEFAULT_FLOATING_BOTTOM_BAR)
+
+    fun setFloatingBottomBar(v: Boolean) {
+        prefs.edit().putBoolean(ConfigKeys.KEY_FLOATING_BOTTOM_BAR, v).apply()
+    }
+
+    fun isFloatingBottomBarBlur(): Boolean =
+        prefs.getBoolean(ConfigKeys.KEY_FLOATING_BOTTOM_BAR_BLUR, ConfigKeys.DEFAULT_FLOATING_BOTTOM_BAR_BLUR)
+
+    fun setFloatingBottomBarBlur(v: Boolean) {
+        prefs.edit().putBoolean(ConfigKeys.KEY_FLOATING_BOTTOM_BAR_BLUR, v).apply()
+    }
+
+    fun isEnableNavigationBadge(): Boolean =
+        prefs.getBoolean(ConfigKeys.KEY_ENABLE_NAVIGATION_BADGE, ConfigKeys.DEFAULT_ENABLE_NAVIGATION_BADGE)
+
+    fun setEnableNavigationBadge(v: Boolean) {
+        prefs.edit().putBoolean(ConfigKeys.KEY_ENABLE_NAVIGATION_BADGE, v).apply()
+    }
+
+    fun isEnablePredictiveBack(): Boolean =
+        prefs.getBoolean(ConfigKeys.KEY_ENABLE_PREDICTIVE_BACK, ConfigKeys.DEFAULT_ENABLE_PREDICTIVE_BACK)
+
+    fun setEnablePredictiveBack(v: Boolean) {
+        prefs.edit().putBoolean(ConfigKeys.KEY_ENABLE_PREDICTIVE_BACK, v).apply()
+    }
+
+    fun getPageScale(): Float =
+        prefs.getFloat(ConfigKeys.KEY_PAGE_SCALE, ConfigKeys.DEFAULT_PAGE_SCALE)
+
+    fun setPageScale(v: Float) {
+        prefs.edit().putFloat(ConfigKeys.KEY_PAGE_SCALE, v).apply()
+    }
+
     // ==================== 写入器 ====================
 
     fun setEnabled(v: Boolean) {

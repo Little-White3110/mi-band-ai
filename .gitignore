@@ -15,6 +15,7 @@ build/
 *.iws
 .vscode/
 .DS_Store
+.trae
 
 # ==================== Android ====================
 local.properties

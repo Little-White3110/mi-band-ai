@@ -26,6 +26,29 @@ object ConfigKeys {
     const val KEY_MAX_TOKENS = "max_tokens"
     const val KEY_APPEND_API_PATH = "append_api_path"
 
+    /** 主题模式：与 Miuix ColorSchemeMode 枚举名对应，String 存储避免依赖 ui 包 */
+    const val KEY_THEME_MODE = "theme_mode"
+
+    /** Monet 动态取色种子色（ARGB Int，0 = 跟随系统壁纸） */
+    const val KEY_KEY_COLOR = "key_color"
+
+    /** 调色板风格（对应 Miuix ThemePaletteStyle 枚举名） */
+    const val KEY_PALETTE_STYLE = "palette_style"
+
+    /** 动态取色规范（Spec2021 / Spec2025，对应 Miuix ThemeColorSpec） */
+    const val KEY_COLOR_SPEC = "color_spec"
+
+    /** Monet 动态取色总开关（KSU 风格：TabRow 选 System/Light/Dark，Monet 开关偏移 +3） */
+    const val KEY_MIUIX_MONET = "miuix_monet"
+
+    // ---------- 视觉效果键（移植 KernelSU ColorPalette） ----------
+    const val KEY_ENABLE_BLUR = "enable_blur"
+    const val KEY_FLOATING_BOTTOM_BAR = "enable_floating_bottom_bar"
+    const val KEY_FLOATING_BOTTOM_BAR_BLUR = "enable_floating_bottom_bar_blur"
+    const val KEY_ENABLE_NAVIGATION_BADGE = "enable_navigation_badge"
+    const val KEY_ENABLE_PREDICTIVE_BACK = "enable_predictive_back"
+    const val KEY_PAGE_SCALE = "page_scale"
+
     // ---------- 默认值 ----------
     const val DEFAULT_ENABLED = true
 
@@ -81,4 +104,27 @@ object ConfigKeys {
 
     /** 最大生成 Token 数 */
     const val DEFAULT_MAX_TOKENS = 200
+
+    /** 默认主题模式：system（跟随系统深浅色，无动态取色） */
+    const val DEFAULT_THEME_MODE = "system"
+
+    /** 默认种子色：0 表示跟随系统壁纸 */
+    const val DEFAULT_KEY_COLOR = 0L
+
+    /** 默认调色板风格 */
+    const val DEFAULT_PALETTE_STYLE = "TonalSpot"
+
+    /** 默认动态取色规范 */
+    const val DEFAULT_COLOR_SPEC = "Spec2021"
+
+    /** Monet 动态取色总开关默认关闭 */
+    const val DEFAULT_MIUIX_MONET = false
+
+    // ---------- 视觉效果默认值（与 KernelSU 持久化默认一致） ----------
+    const val DEFAULT_ENABLE_BLUR = false
+    const val DEFAULT_FLOATING_BOTTOM_BAR = false
+    const val DEFAULT_FLOATING_BOTTOM_BAR_BLUR = false
+    const val DEFAULT_ENABLE_NAVIGATION_BADGE = true
+    const val DEFAULT_ENABLE_PREDICTIVE_BACK = false
+    const val DEFAULT_PAGE_SCALE = 1.0f
 }
