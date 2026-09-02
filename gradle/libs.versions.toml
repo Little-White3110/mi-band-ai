@@ -1,0 +1,43 @@
+# 版本目录（Version Catalog）
+# 版本组合参考自 Miuix 0.9.4-rc01 官方构建配置（compose-miuix-ui/miuix 仓库 gradle/libs.versions.toml）
+# Miuix 0.9.4-rc01 由 Kotlin 2.4.x + Compose Multiplatform 1.12.x 构建，消费端需使用同代 Kotlin 以避免元数据版本不兼容
+
+[versions]
+agp = "9.3.1"
+kotlin = "2.4.10"
+composeMultiplatform = "1.12.0-rc01"
+kotlinxSerialization = "1.7.0"
+androidxActivity = "1.13.0"
+libxposed = "102.0.0"
+miuix = "0.9.4-rc01"
+
+[libraries]
+# ---- 构建工具（根工程声明）----
+android-gradle-plugin = { module = "com.android.tools.build:gradle", version.ref = "agp" }
+kotlin-gradle-plugin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", version.ref = "kotlin" }
+
+# ---- Modern Xposed API 102 ----
+libxposed-api = { module = "io.github.libxposed:api", version.ref = "libxposed" }
+libxposed-service = { module = "io.github.libxposed:service", version.ref = "libxposed" }
+
+# ---- Miuix（小米 HyperOS 设计语言，Compose Multiplatform）----
+miuix-ui = { module = "top.yukonga.miuix.kmp:miuix-ui-android", version.ref = "miuix" }
+miuix-preference = { module = "top.yukonga.miuix.kmp:miuix-preference-android", version.ref = "miuix" }
+miuix-icons = { module = "top.yukonga.miuix.kmp:miuix-icons-android", version.ref = "miuix" }
+
+# ---- Compose（与 Miuix 同源使用 JetBrains Compose Multiplatform 制品，Android 目标实际提供 androidx.compose.* 类）----
+compose-runtime = { module = "org.jetbrains.compose.runtime:runtime", version.ref = "composeMultiplatform" }
+compose-foundation = { module = "org.jetbrains.compose.foundation:foundation", version.ref = "composeMultiplatform" }
+compose-ui = { module = "org.jetbrains.compose.ui:ui", version.ref = "composeMultiplatform" }
+
+# ---- AndroidX ----
+androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "androidxActivity" }
+
+# ---- Kotlin 序列化 ----
+kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinxSerialization" }
+
+[plugins]
+androidApplication = { id = "com.android.application", version.ref = "agp" }
+kotlinAndroid = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+composeCompiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+kotlinSerialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }

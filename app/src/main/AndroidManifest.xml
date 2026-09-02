@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 环上LLM —— LSPosed 模块（Modern Xposed API 102） -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application
+        android:label="环上LLM"
+        android:allowBackup="false"
+        android:supportsRtl="true"
+        android:theme="@android:style/Theme.Material.Light.NoActionBar">
+
+        <!-- Xposed 模块声明（LSPosed 管理器识别模块的依据） -->
+        <meta-data
+            android:name="xposedmodule"
+            android:value="true" />
+        <meta-data
+            android:name="xposedminversion"
+            android:value="102" />
+        <meta-data
+            android:name="xposeddescription"
+            android:value="环上LLM" />
+
+        <!-- 设置页入口（Miuix / Compose） -->
+        <activity
+            android:name=".SettingsActivity"
+            android:exported="true"
+            android:label="环上LLM"
+            android:launchMode="singleTask">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+    </application>
+
+</manifest>

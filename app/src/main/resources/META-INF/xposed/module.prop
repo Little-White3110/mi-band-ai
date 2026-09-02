@@ -1,0 +1,9 @@
+id=llm.miband.littlewhite
+name=环上LLM
+author=mi-band-ai
+description=在小米运动健康 App 中拦截小爱 WebSocket 消息并替换为 LLM 回答
+minApi=102
+minApiVersion=102
+targetApiVersion=102
+version=0.1.0
+versionCode=1
