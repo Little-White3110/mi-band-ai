@@ -3,7 +3,9 @@
 package llm.miband.littlewhite.ui
 
 import android.content.Context
+import android.graphics.Paint
 import android.widget.Toast
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -27,10 +29,16 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -364,6 +372,10 @@ private fun StatsTabContent(
                             fontSize = MiuixTheme.textStyles.body2.fontSize,
                             color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                         )
+                        // Token 用量可视化柱状图（最近最多 10 次调用）
+                        if (stats.recentCalls.isNotEmpty()) {
+                            TokenBarChart(calls = stats.recentCalls)
+                        }
                         if (stats.recentCalls.isEmpty()) {
                             Text(
                                 text = "暂无调用记录。手环真实调用（Hook 进程）的统计通过日志记录，可导出日志查看",
@@ -749,4 +761,167 @@ private fun DecimalInputField(
         modifier = Modifier
             .padding(horizontal = 8.dp, vertical = 6.dp),
     )
+}
+
+/**
+ * Token 用量柱状图 —— 展示最近若干次调用的输入（prompt）/ 输出（completion）token 占比。
+ *
+ * 使用 Compose Canvas 手绘堆叠柱状图：
+ * - X 轴：最近 [maxBars] 次调用（不足则全量），柱下标时间 HH:mm
+ * - Y 轴：token 数量（自动按最大值取整刻度）
+ * - 每根柱下半为输入 token（主题主色），上半为输出 token（辅助色），失败调用整体置灰
+ */
+@Composable
+private fun TokenBarChart(
+    calls: List<LlmClient.ApiCallRecord>,
+    maxBars: Int = 10,
+) {
+    if (calls.isEmpty()) return
+
+    // 取最近 maxBars 条，时间升序排列（最旧在左）
+    val data = calls.takeLast(maxBars)
+    val maxToken = (data.maxOfOrNull { it.promptTokens + it.completionTokens } ?: 1).coerceAtLeast(1)
+
+    // Y 轴刻度：向上取整到 10 的倍数，至少 10，最多显示 4 档
+    val yStep = ((maxToken / 4).coerceAtLeast(1) + 9) / 10 * 10
+    val yMax = yStep * 4
+
+    // 主题色（跟随 Miuix 深浅色）
+    val promptColor = MiuixTheme.colorScheme.primary
+    val completionColor = MiuixTheme.colorScheme.primaryContainer
+    val failureColor = MiuixTheme.colorScheme.onSurfaceVariantSummary.copy(alpha = 0.4f)
+    val textColor = MiuixTheme.colorScheme.onSurfaceVariantSummary
+    val gridColor = MiuixTheme.colorScheme.onSurfaceVariantSummary.copy(alpha = 0.15f)
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+    ) {
+        // 图例
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            LegendDot(color = promptColor, label = "输入 token")
+            LegendDot(color = completionColor, label = "输出 token")
+            LegendDot(color = failureColor, label = "失败")
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        // 图表主体：高度 180dp
+        Canvas(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(180.dp),
+        ) {
+            val leftPad = 44.dp.toPx()   // 左侧留出 Y 轴刻度文字
+            val bottomPad = 22.dp.toPx() // 底部留出 X 轴时间文字
+            val topPad = 8.dp.toPx()
+            val chartW = size.width - leftPad
+            val chartH = size.height - bottomPad - topPad
+
+            // Y 轴刻度文字（原生 Paint 绘制）
+            val textPaint = Paint().apply {
+                color = textColor.toArgb()
+                textSize = 10.sp.toPx()
+                textAlign = Paint.Align.RIGHT
+                isAntiAlias = true
+            }
+            for (i in 0..4) {
+                val v = yStep * i
+                val y = topPad + chartH - (v.toFloat() / yMax) * chartH
+                drawLine(
+                    color = gridColor,
+                    start = Offset(leftPad, y),
+                    end = Offset(size.width, y),
+                    strokeWidth = 1.dp.toPx(),
+                )
+                drawContext.canvas.nativeCanvas.drawText(
+                    v.toString(),
+                    leftPad - 4.dp.toPx(),
+                    y + textPaint.textSize / 3,
+                    textPaint,
+                )
+            }
+
+            // 柱状图
+            val barCount = data.size
+            val slotW = chartW / barCount
+            val barW = (slotW * 0.6f).coerceAtMost(36.dp.toPx())
+
+            // X 轴时间标签（柱下方，居中）
+            val timePaint = Paint().apply {
+                color = textColor.toArgb()
+                textSize = 9.sp.toPx()
+                textAlign = Paint.Align.CENTER
+                isAntiAlias = true
+            }
+            data.forEachIndexed { i, call ->
+                val total = call.promptTokens + call.completionTokens
+                val barH = if (total > 0) (total.toFloat() / yMax) * chartH else 0f
+                val x = leftPad + i * slotW + (slotW - barW) / 2
+                val bottom = topPad + chartH
+
+                if (!call.success) {
+                    // 失败调用：整柱置灰
+                    drawRect(
+                        color = failureColor,
+                        topLeft = Offset(x, bottom - barH),
+                        size = androidx.compose.ui.geometry.Size(barW, barH),
+                    )
+                } else {
+                    // 输入 token（下半）
+                    val promptH = if (call.promptTokens > 0) (call.promptTokens.toFloat() / yMax) * chartH else 0f
+                    val completionH = if (call.completionTokens > 0) (call.completionTokens.toFloat() / yMax) * chartH else 0f
+                    drawRect(
+                        color = completionColor,
+                        topLeft = Offset(x, bottom - completionH),
+                        size = androidx.compose.ui.geometry.Size(barW, completionH),
+                    )
+                    drawRect(
+                        color = promptColor,
+                        topLeft = Offset(x, bottom - completionH - promptH),
+                        size = androidx.compose.ui.geometry.Size(barW, promptH),
+                    )
+                }
+
+                // 时间标签
+                val time = java.text.SimpleDateFormat("HH:mm", java.util.Locale.US)
+                    .format(java.util.Date(call.timestamp))
+                drawContext.canvas.nativeCanvas.drawText(
+                    time,
+                    leftPad + i * slotW + slotW / 2,
+                    size.height - 6.dp.toPx(),
+                    timePaint,
+                )
+            }
+
+            // 边框线
+            drawRect(
+                color = gridColor,
+                topLeft = Offset(leftPad, topPad),
+                size = androidx.compose.ui.geometry.Size(chartW, chartH),
+                style = Stroke(width = 1.dp.toPx()),
+            )
+        }
+    }
+}
+
+/** 图例小圆点 + 文字 */
+@Composable
+private fun LegendDot(color: Color, label: String) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Canvas(modifier = Modifier.height(10.dp).padding(horizontal = 0.dp)) {
+            drawCircle(color = color, radius = 4.dp.toPx())
+        }
+        Spacer(modifier = Modifier.height(0.dp))
+        Text(
+            text = label,
+            modifier = Modifier.padding(start = 6.dp),
+            fontSize = MiuixTheme.textStyles.body2.fontSize,
+            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+        )
+    }
 }
