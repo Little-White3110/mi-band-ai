@@ -34,6 +34,12 @@
             </intent-filter>
         </activity>
 
+        <!-- 跨进程统计接收通道：Hook 进程（com.mi.health）经 ContentResolver 推送统计到此 -->
+        <provider
+            android:name=".config.StatsContentProvider"
+            android:authorities="llm.miband.littlewhite.stats"
+            android:exported="true" />
+
     </application>
 
 </manifest>

@@ -46,6 +46,8 @@ class MainModule : XposedModule() {
 
         // 尽量拿宿主 Context 落盘日志；拿不到时 LogCollector 退回内存+logcat，不影响主流程
         hostContext()?.let { LogCollector.init(it) }
+        // 延迟补偿宿主 Context 注入（init 时可能为 null，此时宿主 App 已完全启动，反射可获取到）
+        LlmClient.setHostContext(hostContext())
 
         val cfg = config
         if (cfg == null) {
@@ -81,7 +83,7 @@ class MainModule : XposedModule() {
             try {
                 val cfg = ConfigStore.fromModule(this)
                 config = cfg
-                LlmClient.init(cfg)
+                LlmClient.init(cfg, hostContext())
                 log(Log.INFO, TAG, "配置与 LlmClient 初始化完成")
             } catch (t: Throwable) {
                 // 初始化失败则放行后续逻辑（config 维持 null，由调用方兜底跳过）

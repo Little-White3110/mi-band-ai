@@ -54,6 +54,28 @@ object StatsStore {
         ))
     }
 
+    /** 将 CallStats 序列化为 JSON 字符串（供 Hook 进程跨进程推送到模块 App） */
+    fun encode(stats: LlmClient.CallStats): String {
+        val ps = PersistentStats(
+            totalCalls = stats.totalCalls, totalFailures = stats.totalFailures,
+            totalPromptTokens = stats.totalPromptTokens, totalCompletionTokens = stats.totalCompletionTokens,
+            recentCalls = stats.recentCalls.map { c -> PersistentCallRecord(
+                timestamp = c.timestamp, apiType = c.apiType, model = c.model,
+                querySummary = c.querySummary, promptTokens = c.promptTokens,
+                completionTokens = c.completionTokens, durationMs = c.durationMs, success = c.success,
+            )},
+        )
+        return json.encodeToString(PersistentStats.serializer(), ps)
+    }
+
+    /** 从 JSON 恢复持久化统计并写入（供 ContentProvider 接收 Hook 进程推送时调用） */
+    fun importJson(raw: String) {
+        val ps = try {
+            json.decodeFromString(PersistentStats.serializer(), raw)
+        } catch (_: Throwable) { return }
+        write(ps)
+    }
+
     /** 读取持久化统计并转换为 LlmClient.CallStats（供设置页 UI 直接使用） */
     fun readCallStats(): LlmClient.CallStats {
         val s = read()

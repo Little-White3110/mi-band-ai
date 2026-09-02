@@ -1,14 +1,19 @@
 package llm.miband.littlewhite.hook
 
+import android.content.Context
+import android.net.Uri
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import llm.miband.littlewhite.config.ConfigStore
+import llm.miband.littlewhite.config.StatsContentProvider
 import llm.miband.littlewhite.config.StatsStore
 import llm.miband.littlewhite.log.LogCollector
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
 
 /**
  * 环上LLM —— LLM 客户端（单例 object）
@@ -41,6 +46,15 @@ object LlmClient {
 
     /** 配置读取器：由 [init] 注入，未初始化前 [ask] 直接返回 null */
     private var config: ConfigStore? = null
+
+    /** 宿主进程 Application Context（用于跨进程推统计到模块 App），由 MainModule 注入 */
+    @Volatile
+    private var hostContext: Context? = null
+
+    /** 单线程池：异步推送统计快照到模块 App 进程，不阻塞 WebSocket 处理线程 */
+    private val statsPusher: ExecutorService = Executors.newSingleThreadExecutor { r ->
+        Thread(r, "RingOnLLM-StatsPusher").apply { isDaemon = true }
+    }
 
     /** 会话缓存：dialogId -> 消息历史 + 最后访问时间戳 */
     private val sessions = ConcurrentHashMap<String, SessionState>()
@@ -181,12 +195,76 @@ object LlmClient {
     }
 
     /**
-     * 初始化：注入配置读取器。
-     * 应在 Hook 进程启动（模块加载）时调用一次。
+     * 把当前内存统计快照异步推送到模块 App 进程（经 StatsContentProvider 跨进程写入
+     * 模块 App 的 SharedPreferences，设置页统计 Tab 可实时读取）。
+     *
+     * 若宿主 Context 未注入（如设置页内测试连接场景，本进程即模块 App，直接落盘即可），
+     * 则退化为直接写入本进程 StatsStore。
      */
-    fun init(config: ConfigStore) {
+    private fun pushStatsToModuleApp() {
+        val snapshot = memoryStatsSnapshot()
+        val ctx = hostContext ?: resolveHostContext()
+        if (ctx == null) {
+            // 本进程就是模块 App（测试连接）或 Hook 进程早期（宿主 Context 暂不可用）：
+            // 直接写本进程 StatsStore（Hook 进程未初始化时静默跳过，后续调用会再尝试推送）
+            StatsStore.importFromMemory(snapshot)
+            return
+        }
+        // 宿主进程（com.mi.health）：异步跨进程推送，避免阻塞 WebSocket 处理线程
+        val payload = try {
+            StatsStore.encode(snapshot)
+        } catch (t: Throwable) {
+            LogCollector.w(TAG, "统计快照序列化失败，跳过推送: ${t.message}")
+            return
+        }
+        statsPusher.execute {
+            try {
+                ctx.contentResolver.call(
+                    Uri.parse("content://${StatsContentProvider.AUTHORITY}"),
+                    StatsContentProvider.METHOD_PUSH,
+                    payload,
+                    null,
+                )
+            } catch (t: Throwable) {
+                LogCollector.w(TAG, "推送统计到模块 App 失败（不影响主流程）: ${t.message}")
+            }
+        }
+    }
+
+    /**
+     * 解析宿主进程 Application Context（供跨进程推送统计）。
+     * 优先使用 [init] 注入的 Context；注入失败时反射 ActivityThread.currentApplication() 兜底
+     * （onModuleLoaded 阶段宿主 App 可能尚未完全启动，后续调用时通常已可用）。
+     */
+    private fun resolveHostContext(): Context? {
+        val ctx = hostContext ?: runCatching {
+            val thread = Class.forName("android.app.ActivityThread")
+            thread.getDeclaredMethod("currentApplication").invoke(null) as? Context
+        }.getOrNull()
+        hostContext = ctx
+        return ctx
+    }
+
+    /**
+     * 初始化：注入配置读取器与宿主 Context。
+     * 应在 Hook 进程启动（模块加载）时调用一次。
+     *
+     * @param hostContext 宿主进程 Application Context；null 时统计仅保留内存/日志，
+     *                    无法跨进程同步到设置页（App 进程测试连接场景传 null 即可）。
+     */
+    fun init(config: ConfigStore, hostContext: Context? = null) {
         this.config = config
+        this.hostContext = hostContext
         LogCollector.i(TAG, "LlmClient 已初始化")
+    }
+
+    /**
+     * 注入宿主进程 Application Context（供跨进程推送统计）。
+     * 与 [init] 的 hostContext 参数等效，专用于 init 后延迟补偿（如 onPackageLoaded
+     * 时宿主 App 已完全启动，此时反射可获取到有效 Context）。
+     */
+    fun setHostContext(context: Context?) {
+        if (context != null) hostContext = context
     }
 
     /**
@@ -272,8 +350,9 @@ object LlmClient {
             durationMs = durationMs,
             success = result != null && !result.text.isNullOrBlank(),
         )
-        // 持久化当前内存统计（仅模块 App 进程有效：Hook 进程未初始化 StatsStore，写入静默跳过）
-        StatsStore.importFromMemory(memoryStatsSnapshot())
+        // 持久化当前内存统计到模块 App 进程（经 ContentProvider 跨进程推送，
+        // 设置页统计 Tab 才能读到手环真实调用数据）
+        pushStatsToModuleApp()
 
         val answer = result?.text
 
