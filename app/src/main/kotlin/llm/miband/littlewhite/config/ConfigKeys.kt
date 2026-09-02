@@ -24,6 +24,7 @@ object ConfigKeys {
     const val KEY_CONTEXT_LENGTH = "context_length"
     const val KEY_TIMEOUT_MS = "timeout_ms"
     const val KEY_MAX_TOKENS = "max_tokens"
+    const val KEY_APPEND_API_PATH = "append_api_path"
 
     // ---------- 默认值 ----------
     const val DEFAULT_ENABLED = true
@@ -34,10 +35,17 @@ object ConfigKeys {
     /** 默认 DeepSeek 请求地址，调用时自动补全 /v1/chat/completions */
     const val DEFAULT_BASE_URL = "https://api.deepseek.com"
 
+    /**
+     * 是否在 Base URL 后自动拼接 API 路径：
+     * true  -> 补全 /v1/chat/completions（OpenAI）或 /v1/messages（Anthropic）；
+     * false -> 将 Base URL 视为完整请求地址，直接使用。
+     */
+    const val DEFAULT_APPEND_API_PATH = true
+
     /** API Key 明文默认空；存储时加密，读取时解密 */
     const val DEFAULT_API_KEY = ""
 
-    const val DEFAULT_MODEL = "deepseek-chat"
+    const val DEFAULT_MODEL = "deepseek-v4-flash"
 
     // 温度 / top_p / top_k 采用「空字符串 = 未设置」约定：
     // 留空时不传该参数给 API，使用 API 自身默认值。
@@ -46,8 +54,12 @@ object ConfigKeys {
     const val DEFAULT_TOP_P = ""       // 空 = 使用 API 默认 top_p
     const val DEFAULT_TOP_K = ""       // 空 = 使用 API 默认 top_k
 
-    /** 思考模式开关（OpenAI: deepseek-reasoner / Anthropic: thinking） */
+    /** 思考模式开关（DeepSeek V4 通过请求体 thinking.type 控制；旧模型名已弃用） */
     const val DEFAULT_THINKING_MODE = false
+
+    /** 思考强度键名与默认值（high / max，仅思考模式下生效） */
+    const val KEY_REASONING_EFFORT = "reasoning_effort"
+    const val DEFAULT_REASONING_EFFORT = "high"
 
     /** 默认系统提示词：面向手环语音场景的简洁回答约束 */
     const val DEFAULT_SYSTEM_PROMPT =

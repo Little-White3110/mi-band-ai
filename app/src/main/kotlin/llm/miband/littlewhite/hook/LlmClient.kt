@@ -4,6 +4,7 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import llm.miband.littlewhite.config.ConfigStore
+import llm.miband.littlewhite.config.StatsStore
 import llm.miband.littlewhite.log.LogCollector
 import java.net.HttpURLConnection
 import java.net.URL
@@ -35,6 +36,9 @@ object LlmClient {
     /** 单条日志里请求/响应 body 的最大长度，超长截断避免刷屏 */
     private const val LOG_BODY_LIMIT = 1500
 
+    /** 调用历史保留上限 */
+    private const val MAX_CALL_LOGS = 200
+
     /** 配置读取器：由 [init] 注入，未初始化前 [ask] 直接返回 null */
     private var config: ConfigStore? = null
 
@@ -43,6 +47,138 @@ object LlmClient {
 
     /** 全局 Json 实例：忽略响应中的未知字段，兼容不同厂商的扩展字段 */
     private val json = Json { ignoreUnknownKeys = true }
+
+    // ==================== API 调用统计 ====================
+
+    /** 单次 API 调用记录 */
+    data class ApiCallRecord(
+        val timestamp: Long,       // 调用时间戳
+        val apiType: String,        // "openai"/"anthropic"
+        val model: String,          // 使用的模型名
+        val querySummary: String,   // 查询文本摘要（前 40 字）
+        val promptTokens: Int,      // 输入 token 数
+        val completionTokens: Int,  // 输出 token 数
+        val totalTokens: Int,       // 总 token 数
+        val durationMs: Long,       // 请求耗时（毫秒）
+        val success: Boolean,       // 是否成功
+    )
+
+    /** 调用历史（环形缓冲，满则丢弃最旧） */
+    private val callLogs = ArrayDeque<ApiCallRecord>()
+
+    /** 累计统计 */
+    @Volatile private var totalCalls = 0
+    @Volatile private var totalPromptTokens = 0L
+    @Volatile private var totalCompletionTokens = 0L
+    @Volatile private var totalFailures = 0
+
+    /**
+     * 获取统计快照（线程安全，供设置页 UI 读取）。
+     * 优先返回持久化统计（模块 App 进程内，重启后仍保留）；
+     * 持久化无数据（Hook 进程未初始化 StatsStore）时回退内存统计。
+     */
+    @JvmStatic
+    fun getStatsSnapshot(): CallStats {
+        val persisted = StatsStore.read()
+        if (persisted.totalCalls > 0 || persisted.recentCalls.isNotEmpty()) {
+            return persisted.toCallStats()
+        }
+        return memoryStatsSnapshot()
+    }
+
+    /** 内存统计快照（不经过持久化优先逻辑，供持久化同步与回退使用） */
+    private fun memoryStatsSnapshot(): CallStats {
+        synchronized(callLogs) {
+            return CallStats(
+                totalCalls = totalCalls,
+                totalFailures = totalFailures,
+                totalPromptTokens = totalPromptTokens,
+                totalCompletionTokens = totalCompletionTokens,
+                recentCalls = callLogs.toList().reversed().take(20),
+            )
+        }
+    }
+
+    /** 清除统计（内存 + 持久化） */
+    @JvmStatic
+    fun clearStats() {
+        synchronized(callLogs) {
+            callLogs.clear()
+            totalCalls = 0
+            totalPromptTokens = 0
+            totalCompletionTokens = 0
+            totalFailures = 0
+        }
+        // 同步清除持久化统计（仅模块 App 进程有效；Hook 进程未初始化则静默跳过）
+        StatsStore.clear()
+        LogCollector.i(TAG, "API 调用统计已清除")
+    }
+
+    data class CallStats(
+        val totalCalls: Int,
+        val totalFailures: Int,
+        val totalPromptTokens: Long,
+        val totalCompletionTokens: Long,
+        val recentCalls: List<ApiCallRecord>,
+    ) {
+        val totalTokens: Long get() = totalPromptTokens + totalCompletionTokens
+    }
+
+    /** 持久化统计 -> CallStats 转换（totalTokens 由 prompt+completion 推算） */
+    private fun StatsStore.PersistentStats.toCallStats(): CallStats = CallStats(
+        totalCalls = totalCalls,
+        totalFailures = totalFailures,
+        totalPromptTokens = totalPromptTokens,
+        totalCompletionTokens = totalCompletionTokens,
+        recentCalls = recentCalls.map { c ->
+            ApiCallRecord(
+                timestamp = c.timestamp,
+                apiType = c.apiType,
+                model = c.model,
+                querySummary = c.querySummary,
+                promptTokens = c.promptTokens,
+                completionTokens = c.completionTokens,
+                totalTokens = c.promptTokens + c.completionTokens,
+                durationMs = c.durationMs,
+                success = c.success,
+            )
+        },
+    )
+
+    /** 记录一次 API 调用（内部调用，在 askLocked 结束后调用） */
+    private fun recordCall(
+        apiType: String,
+        model: String,
+        querySummary: String,
+        promptTokens: Int,
+        completionTokens: Int,
+        durationMs: Long,
+        success: Boolean,
+    ) {
+        val totalTk = promptTokens + completionTokens
+        synchronized(callLogs) {
+            totalCalls++
+            totalPromptTokens += promptTokens
+            totalCompletionTokens += completionTokens
+            if (!success) totalFailures++
+            val record = ApiCallRecord(
+                timestamp = System.currentTimeMillis(),
+                apiType = apiType,
+                model = model,
+                querySummary = querySummary.take(40),
+                promptTokens = promptTokens,
+                completionTokens = completionTokens,
+                totalTokens = totalTk,
+                durationMs = durationMs,
+                success = success,
+            )
+            callLogs.addLast(record)
+            if (callLogs.size > MAX_CALL_LOGS) callLogs.removeFirst()
+        }
+        // 记录到日志（供导出查看）
+        val status = if (success) "成功" else "失败"
+        LogCollector.i(TAG, "调用统计 | $status | $apiType | $model | 输入${promptTokens}tk | 输出${completionTokens}tk | 总${totalTk}tk | 耗时${durationMs}ms")
+    }
 
     /**
      * 初始化：注入配置读取器。
@@ -117,11 +253,29 @@ object LlmClient {
         messages.addAll(history)
         messages.add(ChatMessage("user", text))
 
-        // —— 按 API 类型路由（默认 OpenAI 兼容）——
-        val answer = when (cfg.getApiType().trim().lowercase()) {
+        // —— 按 API 类型路由（默认 OpenAI 兼容），记录耗时用于统计 ——
+        val apiType = cfg.getApiType().trim().lowercase()
+        val startMs = System.currentTimeMillis()
+        val result = when (apiType) {
             "anthropic" -> requestAnthropic(cfg, messages)
             else -> requestOpenAi(cfg, messages)
         }
+        val durationMs = System.currentTimeMillis() - startMs
+
+        // —— 记录 API 调用统计 ——
+        recordCall(
+            apiType = if (apiType == "anthropic") "anthropic" else "openai",
+            model = cfg.getModel(),
+            querySummary = text,
+            promptTokens = result?.promptTokens ?: 0,
+            completionTokens = result?.completionTokens ?: 0,
+            durationMs = durationMs,
+            success = result != null && !result.text.isNullOrBlank(),
+        )
+        // 持久化当前内存统计（仅模块 App 进程有效：Hook 进程未初始化 StatsStore，写入静默跳过）
+        StatsStore.importFromMemory(memoryStatsSnapshot())
+
+        val answer = result?.text
 
         // 收尾：更新最后访问时间；成功后把本轮 user/assistant 写入历史并裁剪
         session.lastAccessMs = System.currentTimeMillis()
@@ -132,6 +286,13 @@ object LlmClient {
         }
         return answer
     }
+
+    /** 一次请求的结果：回答文本 + token 用量（统计用） */
+    private data class RequestResult(
+        val text: String?,
+        val promptTokens: Int = 0,
+        val completionTokens: Int = 0,
+    )
 
     /**
      * 裁剪会话历史：只保留最近 maxContext 条；丢最旧时避免以 assistant 开头，
@@ -169,7 +330,7 @@ object LlmClient {
      * 思考模式（deepseek-reasoner）：模型自带推理，无需额外请求字段；
      * 响应中按需读取非标准的 reasoning_content 字段。
      */
-    private fun requestOpenAi(cfg: ConfigStore, messages: List<ChatMessage>): String? {
+    private fun requestOpenAi(cfg: ConfigStore, messages: List<ChatMessage>): RequestResult? {
         val baseUrl = cfg.getBaseUrl().trimEnd('/')
         if (baseUrl.isEmpty()) {
             LogCollector.e(TAG, "OpenAI: baseUrl 为空，跳过请求")
@@ -180,17 +341,29 @@ object LlmClient {
             LogCollector.e(TAG, "OpenAI: API Key 为空，跳过请求")
             return null
         }
-        val url = "$baseUrl/v1/chat/completions"
+        val url = resolveApiUrl(cfg, baseUrl, OPENAI_PATH)
 
-        // 温度 / top_p / top_k 允许未设置（null）——留空时省略该字段，使用 API 默认值
+        // DeepSeek V4 思考模式由请求体 thinking 控制（默认 enabled，需显式 disabled 才关闭）；
+        // 旧 deepseek-chat / deepseek-reasoner 模型名已弃用。
+        // 仅当配置了思考相关字段时才发送，避免污染第三方 OpenAI 兼容服务。
+        val thinkingOn = cfg.isThinkingMode()
+        val deepSeekStyle = cfg.getModel().contains("deepseek", ignoreCase = true) ||
+            baseUrl.contains("deepseek.com", ignoreCase = true)
+
+        // 思考模式下 DeepSeek 文档声明 temperature/top_p 不生效：直接不传，避免歧义
+        val temperature = if (thinkingOn && deepSeekStyle) null else cfg.getTemperature()
+        val topP = if (thinkingOn && deepSeekStyle) null else cfg.getTopP()
+
         val body = OpenAiRequestBody(
             model = cfg.getModel(),
             messages = messages,
-            temperature = cfg.getTemperature(),
-            topP = cfg.getTopP(),
+            temperature = temperature,
+            topP = topP,
             maxTokens = cfg.getMaxTokens().coerceAtLeast(1),
             stream = false, // 非流式，一次取回完整回答
             topK = cfg.getTopK()?.takeIf { it > 0 }, // 未设置或 <=0 则省略 top_k
+            thinking = if (deepSeekStyle) OpenAiThinking(type = if (thinkingOn) "enabled" else "disabled") else null,
+            reasoningEffort = if (thinkingOn && deepSeekStyle) cfg.getReasoningEffort() else null,
         )
         val bodyJson = json.encodeToString(OpenAiRequestBody.serializer(), body)
         LogCollector.i(TAG, "OpenAI 请求 url=$url body=${truncate(bodyJson)}")
@@ -212,19 +385,17 @@ object LlmClient {
                 LogCollector.e(TAG, "OpenAI 响应缺少 choices[0].message，原文=${truncate(response)}")
                 return null
             }
-            // 思考模式开启且模型为 deepseek-reasoner 时，记录推理过程（非标准字段，按 API 支持情况）
-            val reasoningEnabled = cfg.isThinkingMode() &&
-                cfg.getModel().contains("deepseek-reasoner", ignoreCase = true)
+            // 思考模式开启时记录推理过程（DeepSeek V4 返回 reasoning_content 字段）
+            val reasoningEnabled = cfg.isThinkingMode()
             if (reasoningEnabled && !message.reasoningContent.isNullOrBlank()) {
                 LogCollector.i(TAG, "reasoning_content: ${truncate(message.reasoningContent!!)}")
             }
 
+            val usage = resp.usage
             val content = message.content?.trim()
             val reasoning = message.reasoningContent?.trim()
-            when {
-                // 正常返回最终回答
+            val text = when {
                 !content.isNullOrEmpty() -> content
-                // 个别推理模型只回 reasoning_content（content 为空）时兜底
                 !reasoning.isNullOrEmpty() -> {
                     LogCollector.w(TAG, "OpenAI 响应 content 为空，回退使用 reasoning_content")
                     reasoning
@@ -234,6 +405,11 @@ object LlmClient {
                     null
                 }
             }
+            RequestResult(
+                text = text,
+                promptTokens = usage?.promptTokens ?: 0,
+                completionTokens = usage?.completionTokens ?: 0,
+            )
         } catch (t: Throwable) {
             LogCollector.e(TAG, "OpenAI 响应解析失败，原文=${truncate(response)}", t)
             null
@@ -246,7 +422,7 @@ object LlmClient {
      * Anthropic 请求：POST {base_url}/v1/messages。
      * 思考模式开启时请求体附加 thinking 块；响应 content 可能含 thinking 与 text 两种块。
      */
-    private fun requestAnthropic(cfg: ConfigStore, messages: List<ChatMessage>): String? {
+    private fun requestAnthropic(cfg: ConfigStore, messages: List<ChatMessage>): RequestResult? {
         val baseUrl = cfg.getBaseUrl().trimEnd('/')
         if (baseUrl.isEmpty()) {
             LogCollector.e(TAG, "Anthropic: baseUrl 为空，跳过请求")
@@ -257,22 +433,37 @@ object LlmClient {
             LogCollector.e(TAG, "Anthropic: API Key 为空，跳过请求")
             return null
         }
-        val url = "$baseUrl/v1/messages"
+        val url = resolveApiUrl(cfg, baseUrl, ANTHROPIC_PATH)
 
         // Anthropic 官方 API 不接受 messages 内出现 system 角色，需拆到顶层 system 字段
         val system = messages.firstOrNull { it.role == "system" }?.content
         val chatMessages = messages.filterNot { it.role == "system" }
         val maxTokens = cfg.getMaxTokens().coerceAtLeast(1)
 
+        // DeepSeek Anthropic 兼容端点同样支持思考模式（标准 thinking 块 + 特有 output_config.effort）
+        val thinkingOn = cfg.isThinkingMode()
+        val deepSeekStyle = cfg.getModel().contains("deepseek", ignoreCase = true) ||
+            baseUrl.contains("deepseek.com", ignoreCase = true)
+
+        // 思考模式下 temperature/top_p 不生效（DeepSeek 文档声明），直接不传
+        val temperature = if (thinkingOn) null else cfg.getTemperature()
+        val topP = if (thinkingOn) null else cfg.getTopP()
+
         val body = AnthropicRequestBody(
             model = cfg.getModel(),
             messages = chatMessages,
             maxTokens = maxTokens,
-            temperature = cfg.getTemperature(),
-            topP = cfg.getTopP(),
+            temperature = temperature,
+            topP = topP,
             topK = cfg.getTopK()?.takeIf { it > 0 }, // 未设置或 <=0 则省略 top_k
             system = system?.takeIf { it.isNotBlank() },
-            thinking = if (cfg.isThinkingMode()) AnthropicThinking(budgetTokens = maxTokens) else null,
+            thinking = if (thinkingOn) AnthropicThinking(budgetTokens = maxTokens) else null,
+            // DeepSeek Anthropic 兼容端点的思考强度控制字段（仅思考模式 + DeepSeek 时发送）
+            outputConfig = if (thinkingOn && deepSeekStyle) {
+                AnthropicOutputConfig(effort = cfg.getReasoningEffort())
+            } else {
+                null
+            },
         )
         val bodyJson = json.encodeToString(AnthropicRequestBody.serializer(), body)
         LogCollector.i(TAG, "Anthropic 请求 url=$url body=${truncate(bodyJson)}")
@@ -291,6 +482,7 @@ object LlmClient {
         return try {
             val resp = json.decodeFromString(AnthropicResponseBody.serializer(), response)
             // content 为块数组：可能是 [thinking, text]，取第一个 text 块作为回答
+            var answer: String? = null
             for (block in resp.content) {
                 when (block.type) {
                     "thinking" -> if (!block.thinking.isNullOrBlank()) {
@@ -298,13 +490,20 @@ object LlmClient {
                     }
                     "text" -> {
                         val text = block.text?.trim()
-                        if (!text.isNullOrEmpty()) return text
+                        if (!text.isNullOrEmpty() && answer == null) answer = text
                     }
                     // 其他类型块忽略
                 }
             }
-            LogCollector.e(TAG, "Anthropic 响应 content 中无 text 块，原文=${truncate(response)}")
-            null
+            if (answer == null) {
+                LogCollector.e(TAG, "Anthropic 响应 content 中无 text 块，原文=${truncate(response)}")
+            }
+            val usage = resp.usage
+            RequestResult(
+                text = answer,
+                promptTokens = usage?.inputTokens ?: 0,
+                completionTokens = usage?.outputTokens ?: 0,
+            )
         } catch (t: Throwable) {
             LogCollector.e(TAG, "Anthropic 响应解析失败，原文=${truncate(response)}", t)
             null
@@ -354,6 +553,24 @@ object LlmClient {
     /** 截断超长文本用于日志，避免刷屏 */
     private fun truncate(raw: String): String =
         if (raw.length <= LOG_BODY_LIMIT) raw else raw.take(LOG_BODY_LIMIT) + "...[截断]"
+
+    // ==================== URL 拼接 ====================
+
+    /** OpenAI 兼容 API 路径（启用拼接时补全） */
+    private const val OPENAI_PATH = "/v1/chat/completions"
+
+    /** Anthropic 兼容 API 路径（启用拼接时补全） */
+    private const val ANTHROPIC_PATH = "/v1/messages"
+
+    /**
+     * 根据「自动拼接 API 路径」开关决定最终请求地址：
+     * - 开启：Base URL + API 路径（如 /v1/chat/completions）；
+     * - 关闭：Base URL 视为完整请求地址，直接使用。
+     */
+    private fun resolveApiUrl(cfg: ConfigStore, baseUrl: String, apiPath: String): String {
+        val base = baseUrl.trimEnd('/')
+        return if (cfg.isAppendApiPath()) "$base$apiPath" else base
+    }
 }
 
 // ==================== 序列化数据模型 ====================
@@ -367,7 +584,13 @@ private data class ChatMessage(
 
 // ---------- OpenAI 兼容协议 ----------
 
-/** OpenAI 兼容请求体（stream 恒为 false；温度/top_p/top_k 未设置时省略，使用 API 默认值） */
+/** DeepSeek 思考模式控制（旧 deepseek-reasoner 模型名已弃用，改由请求体控制） */
+@Serializable
+private data class OpenAiThinking(
+    val type: String, // "enabled" / "disabled"
+)
+
+/** OpenAI 兼容请求体（stream 恒为 false；温度/top_p/top_k 未设置时省略；thinking 仅 DeepSeek 发送） */
 @Serializable
 private data class OpenAiRequestBody(
     val model: String,
@@ -377,6 +600,8 @@ private data class OpenAiRequestBody(
     @SerialName("max_tokens") val maxTokens: Int,
     val stream: Boolean,
     @SerialName("top_k") val topK: Int? = null,
+    val thinking: OpenAiThinking? = null,
+    @SerialName("reasoning_effort") val reasoningEffort: String? = null,
 )
 
 /** OpenAI 响应中的 message（content 可能为 null，个别推理模型只回 reasoning_content） */
@@ -395,6 +620,17 @@ private data class OpenAiChoice(
 @Serializable
 private data class OpenAiResponseBody(
     val choices: List<OpenAiChoice> = emptyList(),
+    val usage: OpenAiUsage? = null,
+)
+
+/** OpenAI 返回的 token 用量统计 */
+@Serializable
+private data class OpenAiUsage(
+    @SerialName("completion_tokens") val completionTokens: Int = 0,
+    @SerialName("prompt_tokens") val promptTokens: Int = 0,
+    @SerialName("total_tokens") val totalTokens: Int = 0,
+    @SerialName("prompt_cache_hit_tokens") val promptCacheHitTokens: Int = 0,
+    @SerialName("prompt_cache_miss_tokens") val promptCacheMissTokens: Int = 0,
 )
 
 // ---------- Anthropic 协议 ----------
@@ -406,7 +642,13 @@ private data class AnthropicThinking(
     @SerialName("budget_tokens") val budgetTokens: Int,
 )
 
-/** Anthropic 请求体（system 拆到顶层，thinking 未开启时省略；温度/top_p/top_k 未设置时省略） */
+/** DeepSeek Anthropic 兼容端点的思考强度控制（effort: high / max） */
+@Serializable
+private data class AnthropicOutputConfig(
+    val effort: String,
+)
+
+/** Anthropic 请求体（system 拆到顶层；温度/top_p/top_k 未设置时省略） */
 @Serializable
 private data class AnthropicRequestBody(
     val model: String,
@@ -417,6 +659,7 @@ private data class AnthropicRequestBody(
     @SerialName("top_k") val topK: Int? = null,
     val system: String? = null,
     val thinking: AnthropicThinking? = null,
+    @SerialName("output_config") val outputConfig: AnthropicOutputConfig? = null,
 )
 
 /** Anthropic 响应中的内容块：type 为 "text"（回答）或 "thinking"（思考） */
@@ -430,4 +673,12 @@ private data class AnthropicContentBlock(
 @Serializable
 private data class AnthropicResponseBody(
     val content: List<AnthropicContentBlock> = emptyList(),
+    val usage: AnthropicUsage? = null,
+)
+
+/** Anthropic 返回的 token 用量统计 */
+@Serializable
+private data class AnthropicUsage(
+    @SerialName("input_tokens") val inputTokens: Int = 0,
+    @SerialName("output_tokens") val outputTokens: Int = 0,
 )

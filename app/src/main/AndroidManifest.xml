@@ -2,6 +2,9 @@
 <!-- 环上LLM —— LSPosed 模块（Modern Xposed API 102） -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- 模块 App 进程（设置页）需要网络权限以执行「测试连接」 -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
     <application
         android:label="环上LLM"
         android:allowBackup="false"

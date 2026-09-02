@@ -49,10 +49,20 @@ class ConfigStore private constructor(private val prefs: SharedPreferences) {
         prefs.getString(ConfigKeys.KEY_API_TYPE, ConfigKeys.DEFAULT_API_TYPE)
             ?: ConfigKeys.DEFAULT_API_TYPE
 
-    /** 自定义请求地址（不含 /v1/chat/completions 后缀） */
-    fun getBaseUrl(): String =
-        prefs.getString(ConfigKeys.KEY_BASE_URL, ConfigKeys.DEFAULT_BASE_URL)
-            ?: ConfigKeys.DEFAULT_BASE_URL
+    /** 自定义请求地址：空白或非法时回退默认值（避免残留脏值导致请求失败） */
+    fun getBaseUrl(): String {
+        val v = prefs.getString(ConfigKeys.KEY_BASE_URL, ConfigKeys.DEFAULT_BASE_URL)
+            ?.trim()?.trimEnd('/')
+        return if (v.isNullOrEmpty()) ConfigKeys.DEFAULT_BASE_URL else v
+    }
+
+    /**
+     * 是否在 Base URL 后自动拼接 API 路径：
+     * true -> 补全 /v1/chat/completions（OpenAI）或 /v1/messages（Anthropic）；
+     * false -> Base URL 视为完整请求地址直接使用。
+     */
+    fun isAppendApiPath(): Boolean =
+        prefs.getBoolean(ConfigKeys.KEY_APPEND_API_PATH, ConfigKeys.DEFAULT_APPEND_API_PATH)
 
     /** API Key：读取时自动解密，解密失败返回空串 */
     fun getApiKey(): String =
@@ -84,6 +94,11 @@ class ConfigStore private constructor(private val prefs: SharedPreferences) {
     /** 思考模式开关 */
     fun isThinkingMode(): Boolean =
         prefs.getBoolean(ConfigKeys.KEY_THINKING_MODE, ConfigKeys.DEFAULT_THINKING_MODE)
+
+    /** 思考强度（high / max），仅思考模式下生效 */
+    fun getReasoningEffort(): String =
+        prefs.getString(ConfigKeys.KEY_REASONING_EFFORT, ConfigKeys.DEFAULT_REASONING_EFFORT)
+            ?: ConfigKeys.DEFAULT_REASONING_EFFORT
 
     /** 系统提示词：若用户未设置（空字符串），返回默认值 */
     fun getSystemPrompt(): String {
@@ -126,6 +141,11 @@ class ConfigStore private constructor(private val prefs: SharedPreferences) {
         prefs.edit().putString(ConfigKeys.KEY_BASE_URL, v).apply()
     }
 
+    /** 写入是否自动拼接 API 路径（true 补全 /v1/chat/completions 等，false 直接用 Base URL） */
+    fun setAppendApiPath(v: Boolean) {
+        prefs.edit().putBoolean(ConfigKeys.KEY_APPEND_API_PATH, v).apply()
+    }
+
     /** API Key：写入时自动加密，不将明文存入 SharedPreferences 或日志 */
     fun setApiKey(v: String) {
         prefs.edit().putString(ConfigKeys.KEY_API_KEY, ApiKeyCipher.encrypt(v)).apply()
@@ -152,6 +172,11 @@ class ConfigStore private constructor(private val prefs: SharedPreferences) {
 
     fun setThinkingMode(v: Boolean) {
         prefs.edit().putBoolean(ConfigKeys.KEY_THINKING_MODE, v).apply()
+    }
+
+    /** 写入思考强度（high / max），仅思考模式下生效 */
+    fun setReasoningEffort(v: String) {
+        prefs.edit().putString(ConfigKeys.KEY_REASONING_EFFORT, v).apply()
     }
 
     fun setSystemPrompt(v: String) {

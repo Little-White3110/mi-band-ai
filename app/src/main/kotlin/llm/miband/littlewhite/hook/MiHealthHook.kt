@@ -233,8 +233,9 @@ class MiHealthHook(
      * @return 原方法（或链中下一个拦截器）的返回值
      */
     private fun onMessageIntercepted(chain: XposedInterface.Chain, stringIndex: Int): Any? {
-        // LSPlant 的 getArgs() 返回可变参数列表，可直接在拦截器内改写元素实现参数替换
-        val args = chain.getArgs() as? MutableList<Any?> ?: return chain.proceed()
+        // getArgs() 返回的 List 实际为不可变实现（Collections$UnmodifiableList），
+        // 无法原地改写参数；替换参数的正确方式是通过 chain.proceed(新参数数组) 重新执行原方法。
+        val args = chain.getArgs()
         if (args.size <= stringIndex) return chain.proceed()
         val raw = args[stringIndex] as? String ?: return chain.proceed()
 
@@ -247,10 +248,16 @@ class MiHealthHook(
                 processor.process(msg)
                 return chain.proceed()
             }
-            // —— 小爱回答 Toast：阻塞等待 LLM 替换结果，改写 str 后放行 ——
+            // —— 小爱回答 Toast：阻塞等待 LLM 替换结果，用修改后的 JSON 重新执行原方法 ——
             msg.namespace == NS_TEMPLATE && msg.name == NAME_TOAST -> {
-                if (replaceToastBlocking(args, stringIndex, raw, msg)) {
+                val modified = replaceToastBlocking(raw, msg)
+                if (modified != null && modified != raw) {
                     LogCollector.i(tag, "Toast 回答已替换 dialogId=${msg.dialogId}")
+                    // 构造新参数数组：仅替换 stringIndex 位置的消息体，其余原样保留
+                    val newArgs = arrayOfNulls<Any?>(args.size)
+                    args.forEachIndexed { i, v -> newArgs[i] = v }
+                    newArgs[stringIndex] = modified
+                    return chain.proceed(newArgs)
                 }
                 return chain.proceed()
             }
@@ -264,21 +271,16 @@ class MiHealthHook(
 
     /**
      * Toast 消息替换：触发 processor 后台 LLM 任务并阻塞等待结果，
-     * 成功后直接改写原方法 String 参数（把 payload.text 换成 LLM 回答）。
+     * 成功后把 payload.text 替换为 LLM 回答，返回修改后的 JSON 字符串。
      *
-     * @return 是否成功改写参数
+     * @return 修改后的 JSON；未启用/无 Key/无识别文本/超时/失败时返回 null（保持原消息）
      */
-    private fun replaceToastBlocking(
-        args: MutableList<Any?>,
-        stringIndex: Int,
-        raw: String,
-        msg: WsMessage,
-    ): Boolean {
+    private fun replaceToastBlocking(raw: String, msg: WsMessage): String? {
         // 前置条件：模块启用 / 已配置 API Key / 已记录到识别文本
-        if (!config.isEnabled()) return false
-        if (config.getApiKey().isBlank()) return false
-        val dialogId = msg.dialogId ?: return false
-        if (processor.getPendingQuery(dialogId).isNullOrBlank()) return false
+        if (!config.isEnabled()) return null
+        if (config.getApiKey().isBlank()) return null
+        val dialogId = msg.dialogId ?: return null
+        if (processor.getPendingQuery(dialogId).isNullOrBlank()) return null
 
         // 多 Hook 点（主文本层 + 方案 C readInstruction）可能命中同一条 Toast，
         // 时间窗去重：同一 dialogId 在窗口内已触发过替换则跳过，避免重复发起 LLM 调用
@@ -286,7 +288,7 @@ class MiHealthHook(
         val last = lastToastReplaceMs[dialogId]
         if (last != null && now - last < TOAST_DEDUP_MS) {
             LogCollector.i(tag, "同 dialogId 短时间内已替换过，跳过重复处理 dialogId=$dialogId")
-            return false
+            return null
         }
 
         // 注册一次性替换回调：LLM 完成后携带新文本唤醒等待方
@@ -312,20 +314,13 @@ class MiHealthHook(
             processor.unregisterReplacementCallback(cb)
         }
 
-        val newText = answer.get() ?: return false
+        val newText = answer.get() ?: return null
         val modified = replaceToastText(raw, newText)
-        if (modified == raw) return false
+        if (modified == raw) return null
 
-        // 改写参数：LSPlant 的 getArgs() 返回原方法实际参数数组，改元素可被原方法读到
-        return try {
-            args[stringIndex] = modified
-            // 记录触发时间，供本方法开头的去重逻辑使用
-            lastToastReplaceMs[dialogId] = System.currentTimeMillis()
-            true
-        } catch (t: Throwable) {
-            LogCollector.e(tag, "改写 onMessage 参数失败", t)
-            false
-        }
+        // 记录触发时间，供本方法开头的去重逻辑使用
+        lastToastReplaceMs[dialogId] = System.currentTimeMillis()
+        return modified
     }
 
     /** 把 Toast JSON 的 payload.text 替换为新文本；解析/替换失败返回原串 */
