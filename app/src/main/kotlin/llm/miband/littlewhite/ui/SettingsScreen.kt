@@ -809,18 +809,28 @@ private fun ConfigTabContent(
                 var refreshTick by remember { mutableStateOf(0) }
                 Card(modifier = Modifier.padding(horizontal = 12.dp)) {
                     key(refreshTick) {
+                        // 受控组件（Switch/Dropdown）用本地状态驱动 UI，回调时同时写回 config，
+                        // 避免非响应式 RemotePreferences 读取导致界面不更新
+                        var enabled by remember { mutableStateOf(config.isEnabled()) }
                         SwitchPreference(
                             title = "启用模块",
                             summary = "关闭后 Hook 不再替换手环小爱回答",
-                            checked = config.isEnabled(),
-                            onCheckedChange = { config.setEnabled(it) },
+                            checked = enabled,
+                            onCheckedChange = {
+                                enabled = it
+                                config.setEnabled(it)
+                            },
                         )
+                        var apiTypeIndex by remember {
+                            mutableStateOf(if (config.getApiType().trim().lowercase() == "anthropic") 1 else 0)
+                        }
                         OverlayDropdownPreference(
                             title = "API 类型",
                             summary = "openai 兼容 / anthropic",
                             items = listOf("openai", "anthropic"),
-                            selectedIndex = if (config.getApiType().trim().lowercase() == "anthropic") 1 else 0,
+                            selectedIndex = apiTypeIndex,
                             onSelectedIndexChange = { index ->
+                                apiTypeIndex = index
                                 config.setApiType(if (index == 1) "anthropic" else "openai")
                             },
                         )
@@ -830,11 +840,15 @@ private fun ConfigTabContent(
                             placeholder = "https://api.deepseek.com",
                             onValueChange = { config.setBaseUrl(it) },
                         )
+                        var appendApiPath by remember { mutableStateOf(config.isAppendApiPath()) }
                         SwitchPreference(
                             title = "自动拼接 API 路径",
                             summary = "开启：自动补全 /v1/chat/completions 或 /v1/messages；关闭：Base URL 作为完整地址直接使用",
-                            checked = config.isAppendApiPath(),
-                            onCheckedChange = { config.setAppendApiPath(it) },
+                            checked = appendApiPath,
+                            onCheckedChange = {
+                                appendApiPath = it
+                                config.setAppendApiPath(it)
+                            },
                         )
                         ApiKeyField(
                             initialValue = config.getApiKey(),
@@ -881,19 +895,28 @@ private fun ConfigTabContent(
                             initialValue = config.getTopK(),
                             onValueChange = { config.setTopK(it) },
                         )
+                        // 受控组件用本地状态驱动 UI，避免 RemotePreferences 非响应式导致界面不更新
+                        var thinkingMode by remember { mutableStateOf(config.isThinkingMode()) }
                         SwitchPreference(
                             title = "思考模式",
                             summary = "DeepSeek V4 通过请求体 thinking 控制（旧 reasoner 模型名已弃用）",
-                            checked = config.isThinkingMode(),
-                            onCheckedChange = { config.setThinkingMode(it) },
+                            checked = thinkingMode,
+                            onCheckedChange = {
+                                thinkingMode = it
+                                config.setThinkingMode(it)
+                            },
                         )
                         // 思考强度：仅思考模式下生效（DeepSeek 普通请求默认 high）
+                        var reasoningEffortIndex by remember {
+                            mutableStateOf(if (config.getReasoningEffort().trim().lowercase() == "max") 1 else 0)
+                        }
                         OverlayDropdownPreference(
                             title = "思考强度",
                             summary = "high / max（仅思考模式下生效）",
                             items = listOf("high", "max"),
-                            selectedIndex = if (config.getReasoningEffort().trim().lowercase() == "max") 1 else 0,
+                            selectedIndex = reasoningEffortIndex,
                             onSelectedIndexChange = { index ->
+                                reasoningEffortIndex = index
                                 config.setReasoningEffort(if (index == 1) "max" else "high")
                             },
                         )
@@ -932,12 +955,17 @@ private fun ConfigTabContent(
                 var refreshTick by remember { mutableStateOf(0) }
                 Card(modifier = Modifier.padding(horizontal = 12.dp)) {
                     key(refreshTick) {
+                        // 受控组件用本地状态驱动 UI，避免 RemotePreferences 非响应式导致界面不更新
+                        var contextModeIndex by remember {
+                            mutableStateOf(if (config.getContextMode().trim().lowercase() == "independent") 1 else 0)
+                        }
                         OverlayDropdownPreference(
                             title = "会话模式",
                             summary = "single 连续上下文 / independent 独立会话",
                             items = listOf("single", "independent"),
-                            selectedIndex = if (config.getContextMode().trim().lowercase() == "independent") 1 else 0,
+                            selectedIndex = contextModeIndex,
                             onSelectedIndexChange = { index ->
+                                contextModeIndex = index
                                 config.setContextMode(if (index == 1) "independent" else "single")
                             },
                         )
