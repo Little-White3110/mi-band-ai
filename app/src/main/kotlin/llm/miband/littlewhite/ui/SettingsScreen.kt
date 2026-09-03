@@ -571,6 +571,14 @@ private fun StatusTabContent(
                         tagFg = MiuixTheme.colorScheme.onPrimaryContainer,
                     )
                     HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+                    InfoRow(
+                        label = "快速引擎",
+                        value = if (st?.fastReady == true) "已接入注入点" else "降级(放行原始)",
+                        tag = if (st?.fastReady == true) "可用" else "S0待接入",
+                        tagBg = if (st?.fastReady == true) MiuixTheme.colorScheme.primaryContainer else MiuixTheme.colorScheme.tertiaryContainer,
+                        tagFg = MiuixTheme.colorScheme.onPrimaryContainer,
+                    )
+                    HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
                     ArrowPreference(
                         title = "刷新状态",
                         summary = "重新探测 osbot 桥服务端是否在线",
@@ -776,11 +784,16 @@ private fun restartAppWithRoot(packageName: String): Boolean {
 private const val VOICE_ASSIST_PACKAGE = "com.miui.voiceassist"
 
 /** voiceassist 侧 osbot 桥服务端运行状态 */
-private data class XiaoaiStatus(val running: Boolean, val connected: Boolean, val agent: String)
+private data class XiaoaiStatus(
+    val running: Boolean,
+    val connected: Boolean,
+    val agent: String,
+    val fastReady: Boolean,
+)
 
-/** 解析桥状态行 "STATUS|started=..|connected=..|agent=.."；null/非法 → 未运行 */
+/** 解析桥状态行 "STATUS|started=..|connected=..|agent=..|fastReady=.."；null/非法 → 未运行 */
 private fun parseXiaoaiStatus(raw: String?): XiaoaiStatus {
-    if (raw == null || !raw.startsWith("STATUS")) return XiaoaiStatus(false, false, "")
+    if (raw == null || !raw.startsWith("STATUS")) return XiaoaiStatus(false, false, "", false)
     val kv = raw.split("|").drop(1).mapNotNull {
         val i = it.indexOf('=')
         if (i < 0) null else it.substring(0, i) to it.substring(i + 1)
@@ -789,6 +802,7 @@ private fun parseXiaoaiStatus(raw: String?): XiaoaiStatus {
         running = kv["started"] == "true",
         connected = kv["connected"] == "true",
         agent = kv["agent"].orEmpty(),
+        fastReady = kv["fastReady"] == "true",
     )
 }
 
@@ -986,6 +1000,21 @@ private fun ConfigTabContent(
                                 config.setUsePhoneXiaoai(it)
                             },
                         )
+                        if (usePhoneXiaoai) {
+                            var engineIndex by remember {
+                                mutableStateOf(if (config.getXiaoaiEngine().trim().lowercase() == "fast") 1 else 0)
+                            }
+                            OverlayDropdownPreference(
+                                title = "手端引擎",
+                                summary = "miclaw=小爱大模型(需小米账号登录)；fast=手机端传统云端",
+                                items = listOf("miclaw(大模型)", "fast(快速)"),
+                                selectedIndex = engineIndex,
+                                onSelectedIndexChange = { index ->
+                                    engineIndex = index
+                                    config.setXiaoaiEngine(if (index == 1) "fast" else "miclaw")
+                                },
+                            )
+                        }
                         var apiTypeIndex by remember {
                             mutableStateOf(if (config.getApiType().trim().lowercase() == "anthropic") 1 else 0)
                         }

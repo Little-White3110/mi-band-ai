@@ -75,6 +75,9 @@ object ConfigKeys {
     /** 是否把手环提问交给手机端超级小爱（osbot）处理；开启后不再使用自配 API */
     const val KEY_USE_PHONE_XIAOAI = "use_phone_xiaoai"
 
+    /** 手端小爱回答引擎："miclaw"(osbot大模型) / "fast"(手机端传统云端) */
+    const val KEY_XIAOAI_ENGINE = "xiaoai_engine"
+
     // ---------- 默认值 ----------
     const val DEFAULT_ENABLED = true
 
@@ -204,6 +207,9 @@ object ConfigKeys {
 
     /** 用手端小爱回答：默认关闭（保持现有 DeepSeek 行为，用户显式开启才走小爱） */
     const val DEFAULT_USE_PHONE_XIAOAI = false
+
+    /** 手端小爱默认引擎：miclaw（osbot 大模型） */
+    const val DEFAULT_XIAOAI_ENGINE = "miclaw"
 
     // ---------- 视觉效果默认值（与 KernelSU 持久化默认一致） ----------
     const val DEFAULT_ENABLE_BLUR = false

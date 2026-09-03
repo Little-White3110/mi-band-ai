@@ -59,6 +59,13 @@ object Bridge {
     }
 
     /**
+     * 带引擎的问答请求：query 帧编码为 "$engine\n$query"，服务端按首个换行拆分。
+     * engine 取值 "miclaw" / "fast"；不带前缀时服务端按 miclaw 处理（向后兼容）。
+     */
+    fun requestAnswerWithEngine(engine: String, query: String, timeoutMs: Int): String? =
+        requestAnswer("$engine\n$query", timeoutMs)
+
+    /**
      * 查询 voiceassist 侧桥服务端运行状态。
      * @return 状态行（形如 "STATUS|started=true|connected=true|agent=..."）；
      *         连不上返回 null（=未运行 / 进程被系统回收）。

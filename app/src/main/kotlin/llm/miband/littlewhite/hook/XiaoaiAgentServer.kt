@@ -104,18 +104,32 @@ object XiaoaiAgentServer {
                 val out = DataOutputStream(socket.getOutputStream())
                 if (Bridge.readFrame(input) != Bridge.MAGIC) return
                 Bridge.writeFrame(out, "READY")
-                val query = Bridge.readFrame(input)
-                // 状态查询命令：直接回服务端运行状态，不转发 osbot
-                val answer = if (query == Bridge.STATUS_CMD) {
-                    "STATUS|started=true|connected=${client != null}|agent=$AGENT_TARGET_PACKAGE-$AGENT_TAG"
+                val raw = Bridge.readFrame(input)
+                // 状态查询：回服务端运行状态；否则按 engine 前缀分派 miclaw/fast
+                val answer = if (raw == Bridge.STATUS_CMD) {
+                    "STATUS|started=true|connected=${client != null}|agent=$AGENT_TARGET_PACKAGE-$AGENT_TAG|fastReady=${FastXiaoaiEngine.INJECTION_READY}"
                 } else {
-                    askOsbot(query) ?: ""
+                    val (engine, q) = splitEngine(raw)
+                    when (engine) {
+                        "fast" -> FastXiaoaiEngine.ask(q) ?: ""
+                        else -> askOsbot(q) ?: ""
+                    }
                 }
                 Bridge.writeFrame(out, answer)
             }
         } catch (t: Throwable) {
             LogCollector.w(TAG, "连接处理异常: ${t.message}")
         }
+    }
+
+    /** 拆分 "$engine\n$query" 帧；无前缀或未知引擎按 miclaw */
+    private fun splitEngine(raw: String): Pair<String, String> {
+        val nl = raw.indexOf('\n')
+        if (nl > 0 && nl < raw.length - 1) {
+            val e = raw.substring(0, nl)
+            if (e == "miclaw" || e == "fast") return e to raw.substring(nl + 1)
+        }
+        return "miclaw" to raw
     }
 
     /** 反射走 ExternalAgentClient 的 openSession + submit，阻塞取 onComplete 文本 */

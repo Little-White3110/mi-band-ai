@@ -183,6 +183,11 @@ class ConfigStore private constructor(private val prefs: SharedPreferences) {
     fun getUsePhoneXiaoai(): Boolean =
         prefs.getBoolean(ConfigKeys.KEY_USE_PHONE_XIAOAI, ConfigKeys.DEFAULT_USE_PHONE_XIAOAI)
 
+    /** 手端小爱回答引擎："miclaw" / "fast" */
+    fun getXiaoaiEngine(): String =
+        prefs.getString(ConfigKeys.KEY_XIAOAI_ENGINE, ConfigKeys.DEFAULT_XIAOAI_ENGINE)
+            ?: ConfigKeys.DEFAULT_XIAOAI_ENGINE
+
     /** 多行指令词串拆分为非空列表（trim + 去空） */
     private fun splitCommandWords(raw: String): List<String> =
         raw.lineSequence().map { it.trim() }.filter { it.isNotEmpty() }.toList()
@@ -401,6 +406,11 @@ class ConfigStore private constructor(private val prefs: SharedPreferences) {
     /** 设置是否用手端小爱回答 */
     fun setUsePhoneXiaoai(v: Boolean) {
         prefs.edit().putBoolean(ConfigKeys.KEY_USE_PHONE_XIAOAI, v).apply()
+    }
+
+    /** 设置手端小爱回答引擎："miclaw" / "fast" */
+    fun setXiaoaiEngine(v: String) {
+        prefs.edit().putString(ConfigKeys.KEY_XIAOAI_ENGINE, v).apply()
     }
 
     // ==================== 变更监听 ====================

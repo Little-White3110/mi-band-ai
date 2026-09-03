@@ -21,3 +21,6 @@
 -keepclasseswithmembers class * {
     kotlinx.serialization.KSerializer serializer(...);
 }
+
+-keep class llm.miband.littlewhite.hook.Bridge { *; }
+-keep class llm.miband.littlewhite.hook.FastXiaoaiEngine { *; }

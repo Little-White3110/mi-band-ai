@@ -304,10 +304,17 @@ class WebSocketMessageProcessor(private val config: ConfigStore) {
         llmExecutor.execute {
             try {
                 LogCollector.i(tag, "调用 LLM 替换回答 dialogId=$dialogId query=${queryText.take(60)}")
-                // 回答来源二选一：手端小爱(osbot) 或 自配 LLM(DeepSeek)
+                // 回答来源：手端小爱(miclaw/fast) 或 自配 LLM(DeepSeek)
                 val answer = if (config.getUsePhoneXiaoai()) {
                     val timeout = config.getTimeoutMs().toInt().coerceIn(3_000, 20_000)
-                    XiaoaiAgentClient.ask(queryText, timeout)
+                    val engine = config.getXiaoaiEngine()
+                    var a = XiaoaiAgentClient.ask(queryText, engine, timeout)
+                    // miclaw 失败自动回退 fast（fast 仍失败则 a=null，放行原始 Toast）
+                    if (a == null && engine != "fast") {
+                        LogCollector.i(tag, "miclaw 无回答，回退 fast dialogId=$dialogId")
+                        a = XiaoaiAgentClient.ask(queryText, "fast", timeout)
+                    }
+                    a
                 } else {
                     LlmClient.ask(dialogId, queryText)
                 }
