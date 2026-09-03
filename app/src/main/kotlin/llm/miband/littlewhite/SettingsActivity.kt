@@ -202,32 +202,46 @@ class SettingsActivity : ComponentActivity() {
 }
 
 /**
- * 注册 Xposed Service 监听，把绑定得到的 [LsposedBinding] 存进 Compose 状态。
- * 注意：实际回调名为 [XposedServiceHelper.OnServiceListener.onServiceDied]
- * （并非 onServiceDisconnected），表示框架 Service 断开。
+ * 全局单例：持有 XposedService 绑定状态，跨 Activity 配置变更存活。
+ *
+ * XposedServiceHelper 使用单 listener 字段（mListener），且 mCache 缓存
+ * 只在首次注册时非空。旋转屏幕（Activity 重建）后新注册的 listener
+ * 无法收到已绑定服务的回调，因此需要将 listener 注册一次并在全局保存状态。
  */
-@Composable
-private fun rememberLsposedBinding(): LsposedBinding? {
-    // 保存当前可用的 Service + 配置；未绑定到 Service 时为 null
-    var binding by remember { mutableStateOf<LsposedBinding?>(null) }
+private object BindingHolder {
+    var binding: LsposedBinding? by mutableStateOf(null)
+        private set
 
-    DisposableEffect(Unit) {
-        val listener = object : XposedServiceHelper.OnServiceListener {
+    private var registered = false
+
+    fun ensureRegistered() {
+        if (registered) return
+        registered = true
+        XposedServiceHelper.registerListener(object : XposedServiceHelper.OnServiceListener {
             override fun onServiceBind(service: XposedService) {
-                // 框架 Service 绑定成功，拿到可写 ConfigStore 与框架状态
                 binding = LsposedBinding(service, ConfigStore.fromService(service))
                 LogCollector.i("Settings", "XposedService 已绑定，配置可写")
             }
 
             override fun onServiceDied(service: XposedService) {
-                // 框架 Service 断开，清空绑定（界面回到"未检测到 Service"状态）
                 binding = null
                 LogCollector.i("Settings", "XposedService 断开")
             }
-        }
-        XposedServiceHelper.registerListener(listener)
+        })
+    }
+}
+
+/**
+ * 读取 LSPosed Service 绑定状态。
+ *
+ * 注册一次全局 listener 后，从 [BindingHolder] 读取 Compose 状态，
+ * 确保旋转屏幕等配置变更后 binding 状态不丢失。
+ */
+@Composable
+private fun rememberLsposedBinding(): LsposedBinding? {
+    DisposableEffect(Unit) {
+        BindingHolder.ensureRegistered()
         onDispose { }
     }
-
-    return binding
+    return BindingHolder.binding
 }
