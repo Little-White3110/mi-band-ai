@@ -31,11 +31,12 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      # 项目 compileSdk = 37（android-37 平台），runner 预装 SDK 通常不含，需手动安装
-      - name: Install Android SDK Platform 37
+      # 项目 compileSdk = 37.0（AGP 表达式 DSL: release(37) { minorApiLevel = 0 }），
+      # 对应 SDK 包名为 platforms;android-37.0（注意带 .0 后缀），runner 预装不含，需手动安装
+      - name: Install Android SDK Platform 37.0
         run: |
           SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
-          "$SDKMANAGER" --install "platforms;android-37"
+          "$SDKMANAGER" --install "platforms;android-37.0"
           yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
 
       # 官方 Gradle 配置 + 依赖缓存，加速重复构建
