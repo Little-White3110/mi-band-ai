@@ -61,8 +61,19 @@ object LlmClient {
         Thread(r, "RingOnLLM-StatsPusher").apply { isDaemon = true }
     }
 
-    /** 会话缓存：dialogId -> 消息历史 + 最后访问时间戳 */
+    /** 会话缓存：dialogId -> 消息历史 + 最后访问时间戳（仅 independent 模式使用） */
     private val sessions = ConcurrentHashMap<String, SessionState>()
+
+    /**
+     * 连续上下文（single）模式全局会话槽：小米手环每次提问下发全新 dialog_id，
+     * 若按 dialogId 分组历史永远续接不上；同一时刻手环只有单用户串行提问，
+     * 窗口过期/新话题由 askLocked 按 lastAccessMs 判定清空即可。
+     */
+    @Volatile
+    private var singleSession: SessionState? = null
+
+    /** 保护 singleSession 懒创建的锁 */
+    private val singleSessionLock = Any()
 
     /** 全局 Json 实例：忽略响应中的未知字段，兼容不同厂商的扩展字段 */
     private val json = Json { ignoreUnknownKeys = true }
@@ -297,9 +308,18 @@ object LlmClient {
         // 会话过多时顺带清理超窗的旧会话，避免长期驻留内存
         evictStaleSessions(cfg)
 
-        val session = sessions.getOrPut(dialogId) { SessionState() }
-        // 同一 dialogId 串行执行（含网络 I/O），避免并发改写历史导致消息乱序
-        return synchronized(session) { askLocked(cfg, session, text) }
+        // single（连续上下文）模式复用全局会话槽：小爱协议每次提问下发全新
+        // dialog_id，按 dialogId 分组会让历史永远续接不上；independent 模式
+        // 保持按 dialogId 各开新会话的既有行为。
+        val session: SessionState = if (cfg.getContextMode() == "single") {
+            synchronized(singleSessionLock) {
+                singleSession ?: SessionState().also { singleSession = it }
+            }
+        } else {
+            sessions.getOrPut(dialogId) { SessionState() }
+        }
+        // 同一会话串行执行（含网络 I/O），避免并发改写历史导致消息乱序
+        return synchronized(session) { askLocked(cfg, session, text, dialogId) }
     }
 
     // ==================== 会话管理 ====================
@@ -313,7 +333,12 @@ object LlmClient {
     }
 
     /** 加锁后的核心逻辑：组装消息 -> 路由请求 -> 记录历史 */
-    private fun askLocked(cfg: ConfigStore, session: SessionState, text: String): String? {
+    private fun askLocked(
+        cfg: ConfigStore,
+        session: SessionState,
+        text: String,
+        dialogId: String,
+    ): String? {
         val ctxMode = cfg.getContextMode()
         val windowMs = cfg.getContextWindowMs()
         val ctxLen = cfg.getContextLength().coerceAtLeast(0)
@@ -333,6 +358,11 @@ object LlmClient {
         var history = session.messages.takeLast(ctxLen)
         // 裁剪后若以 assistant 开头则再丢一条：兼容 Anthropic 要求消息以 user 起始且交替
         if (history.firstOrNull()?.role == "assistant") history = history.drop(1)
+        LogCollector.i(
+            TAG,
+            "会话${if (keepHistory) "续接" else "新开"}（mode=$ctxMode, 距上次 ${now - session.lastAccessMs}ms）" +
+                "携带历史 ${history.size} 条 dialogId=$dialogId",
+        )
         messages.addAll(history)
         messages.add(ChatMessage("user", text))
 
