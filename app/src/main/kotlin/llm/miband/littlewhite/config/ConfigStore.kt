@@ -157,6 +157,12 @@ class ConfigStore private constructor(private val prefs: SharedPreferences) {
         return splitCommandWords(raw).ifEmpty { splitCommandWords(ConfigKeys.DEFAULT_CMD_TO_XIAOAI) }
     }
 
+    /** 查询当前回答模式的提示词库：规则同 [getCmdToLlm] */
+    fun getCmdQueryMode(): List<String> {
+        val raw = prefs.getString(ConfigKeys.KEY_CMD_QUERY_MODE, "") ?: ""
+        return splitCommandWords(raw).ifEmpty { splitCommandWords(ConfigKeys.DEFAULT_CMD_QUERY_MODE) }
+    }
+
     /** 是否拦截 Template.General（米家/设备类文本）：默认关闭 */
     fun getInterceptGeneral(): Boolean =
         prefs.getBoolean(ConfigKeys.KEY_INTERCEPT_GENERAL, ConfigKeys.DEFAULT_INTERCEPT_GENERAL)
@@ -354,6 +360,11 @@ class ConfigStore private constructor(private val prefs: SharedPreferences) {
     /** 切到小爱的指令词库（多行文本存储，自动过滤空行） */
     fun setCmdToXiaoai(words: List<String>) {
         prefs.edit().putString(ConfigKeys.KEY_CMD_TO_XIAOAI, words.joinToString("\n")).apply()
+    }
+
+    /** 查询当前回答模式的提示词库（多行文本存储，自动过滤空行） */
+    fun setCmdQueryMode(words: List<String>) {
+        prefs.edit().putString(ConfigKeys.KEY_CMD_QUERY_MODE, words.joinToString("\n")).apply()
     }
 
     /** 设置是否拦截 Template.General（米家/设备类文本） */

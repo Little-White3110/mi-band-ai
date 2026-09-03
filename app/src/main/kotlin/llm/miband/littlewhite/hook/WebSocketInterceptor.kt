@@ -62,6 +62,16 @@ interface WebSocketInterceptor {
     fun onMessage(ws: WsMessage)
 }
 
+/** 语音指令命中后的处理意图：切换模式 / 仅查询当前模式 */
+enum class AnswerCommand(val mode: AnswerMode?) {
+    /** 切到 LLM */
+    SWITCH_LLM(AnswerMode.LLM),
+    /** 切到小爱 */
+    SWITCH_XIAOAI(AnswerMode.XIAOAI),
+    /** 仅查询当前回答模式（不切换） */
+    QUERY_MODE(null);
+}
+
 /**
  * 消息处理器：识别 RecognizeResult（记录识别文本）与 Toast（调用 LLM 替换），其他透传。
  *
@@ -84,8 +94,8 @@ class WebSocketMessageProcessor(private val config: ConfigStore) {
     /** 识别文本缓存：dialogId -> 用户语音识别文本（最终结果） */
     private val pendingQueries = ConcurrentHashMap<String, String>()
 
-    /** 指令命中缓存的对话：dialogId -> 命中的目标模式（供该对话 Toast 替换为确认文案） */
-    private val commandDialogIds = ConcurrentHashMap<String, AnswerMode>()
+    /** 指令命中缓存的对话：dialogId -> 命中的处理意图（供该对话 Toast 替换为确认/查询文案） */
+    private val commandDialogIds = ConcurrentHashMap<String, AnswerCommand>()
 
     /** 替换回调集合：LLM 回答生成后回调 (dialogId, 替换文本) */
     private val replacementCallbacks = java.util.concurrent.CopyOnWriteArrayList<(String, String) -> Unit>()
@@ -174,11 +184,10 @@ class WebSocketMessageProcessor(private val config: ConfigStore) {
     fun getPendingQuery(dialogId: String?): String? =
         dialogId?.let { pendingQueries[it] }
 
-    /**
-     * 消费某 dialogId 的指令命中标记（用于该对话 Toast 替换为确认文案）。
+    /** 消费某 dialogId 的指令命中标记（用于该对话 Toast 替换为确认/查询文案）。
      * 使用 remove 语义：方案 A 与方案 C 双命中同一条 Toast 时只消费一次。
      */
-    fun consumeCommand(dialogId: String?): AnswerMode? =
+    fun consumeCommand(dialogId: String?): AnswerCommand? =
         dialogId?.let { commandDialogIds.remove(it) }
 
     // ==================== 内部实现 ====================
@@ -210,10 +219,12 @@ class WebSocketMessageProcessor(private val config: ConfigStore) {
         val text = extractResultsText(root) ?: return
         if (text.isBlank()) return
 
-        // —— 指令匹配分支：命中"切换到小爱/LLM"等指令词则执行模式切换，不写入识别文本 ——
+        // —— 指令匹配分支：命中"切换到小爱/LLM"执行切换；命中查询词则仅记标记（不切换）。
+        //    命中后不写入识别文本 ——
         val cmd = matchCommand(text)
         if (cmd != null) {
-            ModeState.switchTo(cmd)
+            // 仅切换类指令才改变模式；查询类只记录意图
+            cmd.mode?.let { ModeState.switchTo(it) }
             commandDialogIds[dialogId] = cmd
             trimCommandIds()
             LogCollector.i(tag, "指令命中 dialogId=$dialogId text=${text.take(60)} → ${cmd}")
@@ -227,15 +238,18 @@ class WebSocketMessageProcessor(private val config: ConfigStore) {
 
     /**
      * 包含式指令匹配：识别文本包含词库中任一指令词即命中（忽略大小写）。
-     * 优先匹配「切到小爱」，再匹配「切到 LLM」；均未命中返回 null。
+     * 优先级：切到小爱 > 切到 LLM > 查询当前模式；均未命中返回 null。
      */
-    private fun matchCommand(text: String): AnswerMode? {
+    private fun matchCommand(text: String): AnswerCommand? {
         val lower = text.lowercase()
         if (config.getCmdToXiaoai().any { lower.contains(it.lowercase()) }) {
-            return AnswerMode.XIAOAI
+            return AnswerCommand.SWITCH_XIAOAI
         }
         if (config.getCmdToLlm().any { lower.contains(it.lowercase()) }) {
-            return AnswerMode.LLM
+            return AnswerCommand.SWITCH_LLM
+        }
+        if (config.getCmdQueryMode().any { lower.contains(it.lowercase()) }) {
+            return AnswerCommand.QUERY_MODE
         }
         return null
     }

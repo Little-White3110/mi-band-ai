@@ -107,6 +107,12 @@ object ModeState {
         }
     }
 
+    /** 生成当前实际回答模式的查询文案（查询指令用） */
+    fun buildModeStatus(): String = when (resolveMode()) {
+        AnswerMode.LLM -> "当前是 AI(LLM) 在回答"
+        AnswerMode.XIAOAI -> "当前是小爱在回答"
+    }
+
     /** 把配置字符串解析为默认模式枚举；非法值回退 LLM */
     private fun ConfigStore.toDefaultAnswerMode(): AnswerMode =
         when (getDefaultMode().trim().lowercase()) {

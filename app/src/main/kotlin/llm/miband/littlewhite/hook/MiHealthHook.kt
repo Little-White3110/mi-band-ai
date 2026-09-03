@@ -301,11 +301,13 @@ class MiHealthHook(
     private fun replaceToastBlocking(raw: String, msg: WsMessage): String? {
         val dialogId = msg.dialogId ?: return null
 
-        // —— 指令确认分支：该 dialogId 命中过切换指令 → 直接替换为固定确认文案，
+        // —— 指令/查询分支：该 dialogId 命中过语音指令 → 直接替换为固定确认或当前模式文案，
         //    不阻塞、不调用 LLM，立即返回（先于模块启用/API Key 等前置检查）——
         val cmd = processor.consumeCommand(dialogId)
         if (cmd != null) {
-            val confirmation = ModeState.buildConfirmation(cmd)
+            // 切换类 → 确认文案；查询模式类 → 当前实际模式文案
+            val confirmation = cmd.mode?.let { ModeState.buildConfirmation(it) }
+                ?: ModeState.buildModeStatus()
             LogCollector.i(tag, "指令确认文案 Toast dialogId=$dialogId → ${confirmation}")
             return replaceToastText(raw, confirmation)
         }

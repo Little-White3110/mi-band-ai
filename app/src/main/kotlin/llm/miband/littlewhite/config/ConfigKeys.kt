@@ -62,6 +62,7 @@ object ConfigKeys {
     const val KEY_LLM_MODE_MS = "llm_mode_ms"
     const val KEY_CMD_TO_LLM = "cmd_to_llm"
     const val KEY_CMD_TO_XIAOAI = "cmd_to_xiaoai"
+    const val KEY_CMD_QUERY_MODE = "cmd_query_mode"
     /** 是否拦截 Template.General（米家/设备类文本），默认关闭 */
     const val KEY_INTERCEPT_GENERAL = "intercept_general"
 
@@ -165,6 +166,16 @@ object ConfigKeys {
         "换回小爱\n" +
         "用小爱回答\n" +
         "关闭大模型"
+
+    /** 查询当前回答模式的默认提示词（换行分隔） */
+    const val DEFAULT_CMD_QUERY_MODE =
+        "你是谁\n" +
+        "你是什么模式\n" +
+        "现在什么模式\n" +
+        "你是ai吗\n" +
+        "你是AI吗\n" +
+        "你是小爱吗\n" +
+        "现在谁在回答"
 
     /** 是否拦截 Template.General（米家/设备类文本）：默认不拦截，保证米家真实执行不受影响 */
     const val DEFAULT_INTERCEPT_GENERAL = false

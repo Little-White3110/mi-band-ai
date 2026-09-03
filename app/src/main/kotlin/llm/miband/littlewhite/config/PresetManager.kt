@@ -134,6 +134,7 @@ object PresetManager {
             ConfigKeys.KEY_LLM_MODE_MS to config.getLlmModeMs().toString(),
             ConfigKeys.KEY_CMD_TO_LLM to config.getCmdToLlm().joinToString("\n"),
             ConfigKeys.KEY_CMD_TO_XIAOAI to config.getCmdToXiaoai().joinToString("\n"),
+            ConfigKeys.KEY_CMD_QUERY_MODE to config.getCmdQueryMode().joinToString("\n"),
             ConfigKeys.KEY_INTERCEPT_GENERAL to config.getInterceptGeneral().toString(),
         )
         else -> emptyMap()
@@ -174,6 +175,7 @@ object PresetManager {
                     config.setLlmModeMs(value.toLongOrNull() ?: ConfigKeys.DEFAULT_LLM_MODE_MS)
                 ConfigKeys.KEY_CMD_TO_LLM -> config.setCmdToLlm(splitWords(value))
                 ConfigKeys.KEY_CMD_TO_XIAOAI -> config.setCmdToXiaoai(splitWords(value))
+                ConfigKeys.KEY_CMD_QUERY_MODE -> config.setCmdQueryMode(splitWords(value))
                 ConfigKeys.KEY_INTERCEPT_GENERAL -> config.setInterceptGeneral(value == "true")
                 // 其他键（如 enabled）不参与预设
             }

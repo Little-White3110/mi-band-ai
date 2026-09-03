@@ -927,6 +927,15 @@ private fun ConfigTabContent(
                                 config.setCmdToXiaoai(text.lineSequence().map { it.trim() }.filter { it.isNotEmpty() }.toList())
                             },
                         )
+                        TextInputField(
+                            initialValue = config.getCmdQueryMode().joinToString("\n"),
+                            label = "查询当前模式的提示词",
+                            singleLine = false,
+                            placeholder = "每行一个，默认含：你是谁",
+                            onValueChange = { text ->
+                                config.setCmdQueryMode(text.lineSequence().map { it.trim() }.filter { it.isNotEmpty() }.toList())
+                            },
+                        )
                         SwitchPreference(
                             title = "拦截米家/设备类(General)（开发中）",
                             summary = "米家富卡片文本走独立通道，当前版本暂不支持替换，敬请期待",
