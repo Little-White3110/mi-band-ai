@@ -29,6 +29,8 @@ object PresetManager {
     const val CATEGORY_API = "api"
     const val CATEGORY_GENERATION = "generation"
     const val CATEGORY_SESSION = "session"
+    /** 回答模式分组（默认模式 / 切换时长 / 指令词库） */
+    const val CATEGORY_MODE = "mode"
 
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -126,6 +128,14 @@ object PresetManager {
             ConfigKeys.KEY_CONTEXT_WINDOW_MS to config.getContextWindowMs().toString(),
             ConfigKeys.KEY_CONTEXT_LENGTH to config.getContextLength().toString(),
         )
+        CATEGORY_MODE -> linkedMapOf(
+            ConfigKeys.KEY_DEFAULT_MODE to config.getDefaultMode(),
+            ConfigKeys.KEY_XIAOAI_MODE_MS to config.getXiaoaiModeMs().toString(),
+            ConfigKeys.KEY_LLM_MODE_MS to config.getLlmModeMs().toString(),
+            ConfigKeys.KEY_CMD_TO_LLM to config.getCmdToLlm().joinToString("\n"),
+            ConfigKeys.KEY_CMD_TO_XIAOAI to config.getCmdToXiaoai().joinToString("\n"),
+            ConfigKeys.KEY_INTERCEPT_GENERAL to config.getInterceptGeneral().toString(),
+        )
         else -> emptyMap()
     }
 
@@ -157,8 +167,20 @@ object PresetManager {
                     config.setContextWindowMs(value.toIntOrNull() ?: ConfigKeys.DEFAULT_CONTEXT_WINDOW_MS)
                 ConfigKeys.KEY_CONTEXT_LENGTH ->
                     config.setContextLength(value.toIntOrNull() ?: ConfigKeys.DEFAULT_CONTEXT_LENGTH)
+                ConfigKeys.KEY_DEFAULT_MODE -> config.setDefaultMode(value)
+                ConfigKeys.KEY_XIAOAI_MODE_MS ->
+                    config.setXiaoaiModeMs(value.toLongOrNull() ?: ConfigKeys.DEFAULT_XIAOAI_MODE_MS)
+                ConfigKeys.KEY_LLM_MODE_MS ->
+                    config.setLlmModeMs(value.toLongOrNull() ?: ConfigKeys.DEFAULT_LLM_MODE_MS)
+                ConfigKeys.KEY_CMD_TO_LLM -> config.setCmdToLlm(splitWords(value))
+                ConfigKeys.KEY_CMD_TO_XIAOAI -> config.setCmdToXiaoai(splitWords(value))
+                ConfigKeys.KEY_INTERCEPT_GENERAL -> config.setInterceptGeneral(value == "true")
                 // 其他键（如 enabled）不参与预设
             }
         }
     }
+
+    /** 把多行指令词串拆分为非空列表（trim + 去空） */
+    private fun splitWords(raw: String): List<String> =
+        raw.lineSequence().map { it.trim() }.filter { it.isNotEmpty() }.toList()
 }

@@ -5,9 +5,13 @@ package llm.miband.littlewhite.hook
 import io.github.libxposed.api.XposedInterface
 import io.github.libxposed.api.XposedModule
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import llm.miband.littlewhite.config.ConfigStore
 import llm.miband.littlewhite.log.LogCollector
 import java.lang.reflect.Method
@@ -70,6 +74,7 @@ class MiHealthHook(
         const val NAME_RECOGNIZE_RESULT = "RecognizeResult"
         const val NS_TEMPLATE = "Template"
         const val NAME_TOAST = "Toast"
+        const val NAME_GENERAL = "General"
 
         /** 目标类候选：defpackage.oav 为混淆类名，版本升级可能变化，按序尝试 */
         val TARGET_CLASS_CANDIDATES = listOf("defpackage.oav")
@@ -102,6 +107,9 @@ class MiHealthHook(
      * （停用后 Hook 保留但处理逻辑通过 isEnabled 检查跳过，避免频繁卸载/重装）。
      */
     fun install() {
+        // 初始化回答模式状态机（幂等）
+        ModeState.init(config)
+
         // 配置变更监听：启用时自动补装 Hook
         config.registerOnChangeListener { _, _ ->
             if (config.isEnabled()) {
@@ -248,11 +256,12 @@ class MiHealthHook(
                 processor.process(msg)
                 return chain.proceed()
             }
-            // —— 小爱回答 Toast：阻塞等待 LLM 替换结果，用修改后的 JSON 重新执行原方法 ——
-            msg.namespace == NS_TEMPLATE && msg.name == NAME_TOAST -> {
+            // —— 小爱回答（Toast / 开关开启时的 General）：阻塞等待 LLM 替换结果，
+            //    用修改后的 JSON 重新执行原方法 ——
+            isAnswerText(msg) -> {
                 val modified = replaceToastBlocking(raw, msg)
                 if (modified != null && modified != raw) {
-                    LogCollector.i(tag, "Toast 回答已替换 dialogId=${msg.dialogId}")
+                    LogCollector.i(tag, "${msg.name} 回答已替换 dialogId=${msg.dialogId}")
                     // 构造新参数数组：仅替换 stringIndex 位置的消息体，其余原样保留
                     val newArgs = arrayOfNulls<Any?>(args.size)
                     args.forEachIndexed { i, v -> newArgs[i] = v }
@@ -270,16 +279,46 @@ class MiHealthHook(
     }
 
     /**
+     * 是否为本模块可替换的「回答文本」消息：
+     * - Template.Toast：恒为可替换；
+     * - Template.General（米家/设备类文本）：仅当配置开启拦截时纳入替换，默认放行。
+     */
+    private fun isAnswerText(msg: WsMessage): Boolean {
+        if (msg.namespace != NS_TEMPLATE) return false
+        return when (msg.name) {
+            NAME_TOAST -> true
+            NAME_GENERAL -> config.getInterceptGeneral()
+            else -> false
+        }
+    }
+
+    /**
      * Toast 消息替换：触发 processor 后台 LLM 任务并阻塞等待结果，
      * 成功后把 payload.text 替换为 LLM 回答，返回修改后的 JSON 字符串。
      *
      * @return 修改后的 JSON；未启用/无 Key/无识别文本/超时/失败时返回 null（保持原消息）
      */
     private fun replaceToastBlocking(raw: String, msg: WsMessage): String? {
+        val dialogId = msg.dialogId ?: return null
+
+        // —— 指令确认分支：该 dialogId 命中过切换指令 → 直接替换为固定确认文案，
+        //    不阻塞、不调用 LLM，立即返回（先于模块启用/API Key 等前置检查）——
+        val cmd = processor.consumeCommand(dialogId)
+        if (cmd != null) {
+            val confirmation = ModeState.buildConfirmation(cmd)
+            LogCollector.i(tag, "指令确认文案 Toast dialogId=$dialogId → ${confirmation}")
+            return replaceToastText(raw, confirmation)
+        }
+
+        // —— 小爱模式放行分支：当前处于小爱接管 → 不调 LLM，放行小爱原始回答 ——
+        if (ModeState.resolveMode() == AnswerMode.XIAOAI) {
+            LogCollector.i(tag, "小爱模式，Toast 透传 dialogId=$dialogId（不调 LLM）")
+            return null
+        }
+
         // 前置条件：模块启用 / 已配置 API Key / 已记录到识别文本
         if (!config.isEnabled()) return null
         if (config.getApiKey().isBlank()) return null
-        val dialogId = msg.dialogId ?: return null
         if (processor.getPendingQuery(dialogId).isNullOrBlank()) return null
 
         // 多 Hook 点（主文本层 + 方案 C readInstruction）可能命中同一条 Toast，
@@ -323,17 +362,39 @@ class MiHealthHook(
         return modified
     }
 
-    /** 把 Toast JSON 的 payload.text 替换为新文本；解析/替换失败返回原串 */
+    /**
+     * 把回答消息中的"小爱原始回答文本"替换为新文本。
+     *
+     * 关键点：手环屏幕显示的文本可能不在 payload.text，而在 payload.display 等
+     * 富卡片字段（米家/设备类）里。因此除 text 外，还要在整棵 JSON 中做深度替换：
+     * 凡字符串字面量等于旧回答文本的，一律替换为 LLM 新文本（含 display/full_screen 等）。
+     * 解析/替换失败返回原串，绝不破坏宿主消息。
+     */
     private fun replaceToastText(rawJson: String, newText: String): String {
         return try {
             val root = json.parseToJsonElement(rawJson).jsonObject
             val payload = root["payload"] as? JsonObject ?: return rawJson
+            // 旧回答文本（payload.text）
+            val oldText = (payload["text"] as? JsonPrimitive)?.contentOrNull ?: return rawJson
+            if (oldText.isEmpty()) return rawJson
+
+            // 1) 先显式替换 payload.text（保持既有语义）
             val newPayload = JsonObject(payload.toMutableMap().apply { this["text"] = JsonPrimitive(newText) })
             val newRoot = JsonObject(root.toMutableMap().apply { this["payload"] = newPayload })
-            newRoot.toString()
+            // 2) 深度替换：整棵 JSON 中所有等于旧回答的字符串字面量（覆盖 display 等富卡片）
+            val replaced = replaceStrings(newRoot, oldText, newText)
+            replaced.toString()
         } catch (t: Throwable) {
             LogCollector.w(tag, "替换 Toast 文本失败: ${t.message}")
             rawJson
         }
+    }
+
+    /** 深度遍历 JSON，把所有字符串字面量内容 == old 的替换为 new（contentOrNull 仅对字符串返回内容） */
+    private fun replaceStrings(el: JsonElement, old: String, newV: String): JsonElement = when (el) {
+        is JsonPrimitive -> if (el.contentOrNull == old) JsonPrimitive(newV) else el
+        is JsonObject -> JsonObject(el.entries.associate { (k, v) -> k to replaceStrings(v, old, newV) })
+        is JsonArray -> JsonArray(el.map { replaceStrings(it, old, newV) })
+        else -> el
     }
 }

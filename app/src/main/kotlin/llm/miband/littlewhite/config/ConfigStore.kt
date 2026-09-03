@@ -127,6 +127,44 @@ class ConfigStore private constructor(private val prefs: SharedPreferences) {
     fun getMaxTokens(): Int =
         prefs.getInt(ConfigKeys.KEY_MAX_TOKENS, ConfigKeys.DEFAULT_MAX_TOKENS)
 
+    // ==================== 回答模式 ====================
+
+    /** 默认回答模式："llm"（LLM 接管）/"xiaoai"（小爱接管） */
+    fun getDefaultMode(): String =
+        prefs.getString(ConfigKeys.KEY_DEFAULT_MODE, ConfigKeys.DEFAULT_DEFAULT_MODE)
+            ?: ConfigKeys.DEFAULT_DEFAULT_MODE
+
+    /** 切到小爱后的持续时长（毫秒），0 = 永久 */
+    fun getXiaoaiModeMs(): Long =
+        prefs.getLong(ConfigKeys.KEY_XIAOAI_MODE_MS, ConfigKeys.DEFAULT_XIAOAI_MODE_MS)
+
+    /** 切到 LLM 后的持续时长（毫秒），0 = 永久 */
+    fun getLlmModeMs(): Long =
+        prefs.getLong(ConfigKeys.KEY_LLM_MODE_MS, ConfigKeys.DEFAULT_LLM_MODE_MS)
+
+    /**
+     * 切到 LLM 的指令词库：按行拆分、trim、去空；
+     * 用户未配置（空串）时回退默认词库。
+     */
+    fun getCmdToLlm(): List<String> {
+        val raw = prefs.getString(ConfigKeys.KEY_CMD_TO_LLM, "") ?: ""
+        return splitCommandWords(raw).ifEmpty { splitCommandWords(ConfigKeys.DEFAULT_CMD_TO_LLM) }
+    }
+
+    /** 切到小爱的指令词库：规则同 [getCmdToLlm] */
+    fun getCmdToXiaoai(): List<String> {
+        val raw = prefs.getString(ConfigKeys.KEY_CMD_TO_XIAOAI, "") ?: ""
+        return splitCommandWords(raw).ifEmpty { splitCommandWords(ConfigKeys.DEFAULT_CMD_TO_XIAOAI) }
+    }
+
+    /** 是否拦截 Template.General（米家/设备类文本）：默认关闭 */
+    fun getInterceptGeneral(): Boolean =
+        prefs.getBoolean(ConfigKeys.KEY_INTERCEPT_GENERAL, ConfigKeys.DEFAULT_INTERCEPT_GENERAL)
+
+    /** 多行指令词串拆分为非空列表（trim + 去空） */
+    private fun splitCommandWords(raw: String): List<String> =
+        raw.lineSequence().map { it.trim() }.filter { it.isNotEmpty() }.toList()
+
     // ==================== 主题设置 ====================
 
     /** 主题模式（与 Miuix ColorSchemeMode 枚举名对应，String 存储） */
@@ -290,6 +328,37 @@ class ConfigStore private constructor(private val prefs: SharedPreferences) {
 
     fun setMaxTokens(v: Int) {
         prefs.edit().putInt(ConfigKeys.KEY_MAX_TOKENS, v).apply()
+    }
+
+    // ==================== 回答模式写入器 ====================
+
+    fun setDefaultMode(v: String) {
+        prefs.edit().putString(ConfigKeys.KEY_DEFAULT_MODE, v).apply()
+    }
+
+    /** 切到小爱的持续时长（毫秒），0 = 永久 */
+    fun setXiaoaiModeMs(v: Long) {
+        prefs.edit().putLong(ConfigKeys.KEY_XIAOAI_MODE_MS, v).apply()
+    }
+
+    /** 切到 LLM 的持续时长（毫秒），0 = 永久 */
+    fun setLlmModeMs(v: Long) {
+        prefs.edit().putLong(ConfigKeys.KEY_LLM_MODE_MS, v).apply()
+    }
+
+    /** 切到 LLM 的指令词库（多行文本存储，自动过滤空行） */
+    fun setCmdToLlm(words: List<String>) {
+        prefs.edit().putString(ConfigKeys.KEY_CMD_TO_LLM, words.joinToString("\n")).apply()
+    }
+
+    /** 切到小爱的指令词库（多行文本存储，自动过滤空行） */
+    fun setCmdToXiaoai(words: List<String>) {
+        prefs.edit().putString(ConfigKeys.KEY_CMD_TO_XIAOAI, words.joinToString("\n")).apply()
+    }
+
+    /** 设置是否拦截 Template.General（米家/设备类文本） */
+    fun setInterceptGeneral(v: Boolean) {
+        prefs.edit().putBoolean(ConfigKeys.KEY_INTERCEPT_GENERAL, v).apply()
     }
 
     // ==================== 变更监听 ====================

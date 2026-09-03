@@ -84,6 +84,9 @@ class WebSocketMessageProcessor(private val config: ConfigStore) {
     /** 识别文本缓存：dialogId -> 用户语音识别文本（最终结果） */
     private val pendingQueries = ConcurrentHashMap<String, String>()
 
+    /** 指令命中缓存的对话：dialogId -> 命中的目标模式（供该对话 Toast 替换为确认文案） */
+    private val commandDialogIds = ConcurrentHashMap<String, AnswerMode>()
+
     /** 替换回调集合：LLM 回答生成后回调 (dialogId, 替换文本) */
     private val replacementCallbacks = java.util.concurrent.CopyOnWriteArrayList<(String, String) -> Unit>()
 
@@ -93,8 +96,11 @@ class WebSocketMessageProcessor(private val config: ConfigStore) {
     }
 
     companion object {
-        /** 识别文本缓存大小上限：超出后清理最旧条目，防止内存膨胀 */
+        /* 识别文本缓存大小上限：超出后清理最旧条目，防止内存膨胀 */
         private const val MAX_PENDING_QUERIES = 100
+
+        /** 指令命中缓存大小上限：超出后清理最旧条目，防止残留膨胀 */
+        private const val MAX_COMMAND_IDS = 50
         private const val TAG = "WsProcessor"
 
         // 消息命名空间/名称常量（与小米 AI 协议一致）
@@ -102,6 +108,7 @@ class WebSocketMessageProcessor(private val config: ConfigStore) {
         private const val NAME_RECOGNIZE_RESULT = "RecognizeResult"
         private const val NS_TEMPLATE = "Template"
         private const val NAME_TOAST = "Toast"
+        private const val NAME_GENERAL = "General"
     }
 
     // ==================== 替换回调 ====================
@@ -144,6 +151,15 @@ class WebSocketMessageProcessor(private val config: ConfigStore) {
                     handleToast(msg, root)
                     true // 始终放行（先放行原始 Toast，LLM 结果经回调注入）
                 }
+                // —— Template.General（米家/设备类文本）：仅在开关开启时触发替换，默认放行 ——
+                msg.namespace == NS_TEMPLATE && msg.name == NAME_GENERAL -> {
+                    if (config.getInterceptGeneral()) {
+                        handleToast(msg, root)
+                    } else {
+                        LogCollector.i(tag, "未开启拦截 General，General 透传 dialogId=${msg.dialogId}")
+                    }
+                    true
+                }
                 // —— 其他消息：透传 ——
                 else -> true
             }
@@ -157,6 +173,13 @@ class WebSocketMessageProcessor(private val config: ConfigStore) {
     /** 读取某 dialogId 的识别文本（供 Hook 实现同步获取用户问题） */
     fun getPendingQuery(dialogId: String?): String? =
         dialogId?.let { pendingQueries[it] }
+
+    /**
+     * 消费某 dialogId 的指令命中标记（用于该对话 Toast 替换为确认文案）。
+     * 使用 remove 语义：方案 A 与方案 C 双命中同一条 Toast 时只消费一次。
+     */
+    fun consumeCommand(dialogId: String?): AnswerMode? =
+        dialogId?.let { commandDialogIds.remove(it) }
 
     // ==================== 内部实现 ====================
 
@@ -176,7 +199,7 @@ class WebSocketMessageProcessor(private val config: ConfigStore) {
     private fun asText(element: JsonElement?): String? =
         if (element is JsonPrimitive) element.contentOrNull else null
 
-    /** 处理 RecognizeResult：读取 origin_text（兜底 getText/text）写入缓存 */
+    /** 处理 RecognizeResult：先做指令匹配，未命中再读取识别文本写入缓存 */
     private fun handleRecognizeResult(msg: WsMessage, root: JsonObject) {
         val dialogId = msg.dialogId ?: return
         val payload = asJsonObject(root["payload"]) ?: return
@@ -187,9 +210,46 @@ class WebSocketMessageProcessor(private val config: ConfigStore) {
         val text = extractResultsText(root) ?: return
         if (text.isBlank()) return
 
+        // —— 指令匹配分支：命中"切换到小爱/LLM"等指令词则执行模式切换，不写入识别文本 ——
+        val cmd = matchCommand(text)
+        if (cmd != null) {
+            ModeState.switchTo(cmd)
+            commandDialogIds[dialogId] = cmd
+            trimCommandIds()
+            LogCollector.i(tag, "指令命中 dialogId=$dialogId text=${text.take(60)} → ${cmd}")
+            return
+        }
+
         pendingQueries[dialogId] = text
         LogCollector.i(tag, "记录识别文本 dialogId=$dialogId text=${text.take(60)}")
         trimPendingQueries()
+    }
+
+    /**
+     * 包含式指令匹配：识别文本包含词库中任一指令词即命中（忽略大小写）。
+     * 优先匹配「切到小爱」，再匹配「切到 LLM」；均未命中返回 null。
+     */
+    private fun matchCommand(text: String): AnswerMode? {
+        val lower = text.lowercase()
+        if (config.getCmdToXiaoai().any { lower.contains(it.lowercase()) }) {
+            return AnswerMode.XIAOAI
+        }
+        if (config.getCmdToLlm().any { lower.contains(it.lowercase()) }) {
+            return AnswerMode.LLM
+        }
+        return null
+    }
+
+    /** 指令命中缓存裁剪：超过上限时移除最旧条目 */
+    private fun trimCommandIds() {
+        if (commandDialogIds.size <= MAX_COMMAND_IDS) return
+        val it = commandDialogIds.entries.iterator()
+        var removed = 0
+        while (it.hasNext() && commandDialogIds.size - removed > MAX_COMMAND_IDS) {
+            it.next()
+            it.remove()
+            removed++
+        }
     }
 
     /**

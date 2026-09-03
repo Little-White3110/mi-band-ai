@@ -871,7 +871,84 @@ private fun ConfigTabContent(
                 }
             }
 
-            // ---------- 分组 2：生成参数 ----------
+            // ---------- 分组 2：回答模式（语音指令切换小爱 / LLM） ----------
+            item(key = "modeTitle") {
+                SmallTitle("回答模式")
+            }
+            item(key = "mode") {
+                var refreshTick by remember { mutableStateOf(0) }
+                Card(modifier = Modifier.padding(horizontal = 12.dp)) {
+                    // 受控组件（OverlayDropdown/Switch）必须由本地 state 驱动显示：
+                    // 直接用 config 读取作为 checked/selectedIndex，写 config 不触发重组，
+                    // 会导致"点了没反应"。state 声明在 key(refreshTick) 内，应用预设刷新时
+                    // 整个子树重建、回读 config 最新值，保证显示与配置一致。
+                    key(refreshTick) {
+                        var defaultMode by remember { mutableStateOf(config.getDefaultMode().trim().lowercase()) }
+                        var interceptGeneral by remember { mutableStateOf(config.getInterceptGeneral()) }
+                        OverlayDropdownPreference(
+                            title = "默认回答模式",
+                            summary = "无指令时默认由谁回答",
+                            items = listOf("LLM 接管", "小爱接管"),
+                            selectedIndex = if (defaultMode == "xiaoai") 1 else 0,
+                            onSelectedIndexChange = { index ->
+                                defaultMode = if (index == 1) "xiaoai" else "llm"
+                                config.setDefaultMode(defaultMode)
+                            },
+                        )
+                        NumberInputField(
+                            label = "小爱模式持续时长（分钟，0=永久）",
+                            initialValue = (config.getXiaoaiModeMs() / 60_000L).toInt(),
+                            onValueChange = { minutes ->
+                                config.setXiaoaiModeMs(minutes.toLong() * 60_000L)
+                            },
+                        )
+                        NumberInputField(
+                            label = "LLM 模式持续时长（分钟，0=永久）",
+                            initialValue = (config.getLlmModeMs() / 60_000L).toInt(),
+                            onValueChange = { minutes ->
+                                config.setLlmModeMs(minutes.toLong() * 60_000L)
+                            },
+                        )
+                        TextInputField(
+                            initialValue = config.getCmdToLlm().joinToString("\n"),
+                            label = "切换到 LLM 的指令词",
+                            singleLine = false,
+                            placeholder = "每行一个",
+                            onValueChange = { text ->
+                                config.setCmdToLlm(text.lineSequence().map { it.trim() }.filter { it.isNotEmpty() }.toList())
+                            },
+                        )
+                        TextInputField(
+                            initialValue = config.getCmdToXiaoai().joinToString("\n"),
+                            label = "切换到小爱的指令词",
+                            singleLine = false,
+                            placeholder = "每行一个",
+                            onValueChange = { text ->
+                                config.setCmdToXiaoai(text.lineSequence().map { it.trim() }.filter { it.isNotEmpty() }.toList())
+                            },
+                        )
+                        SwitchPreference(
+                            title = "拦截米家/设备类(General)（开发中）",
+                            summary = "米家富卡片文本走独立通道，当前版本暂不支持替换，敬请期待",
+                            checked = interceptGeneral,
+                            enabled = false, // 开发中：置灰不可用
+                            onCheckedChange = { v ->
+                                interceptGeneral = v
+                                config.setInterceptGeneral(v)
+                            },
+                        )
+                    }
+                    PresetSection(
+                        category = PresetManager.CATEGORY_MODE,
+                        title = "回答模式",
+                        config = config,
+                        context = context,
+                        onPresetApplied = { refreshTick++ },
+                    )
+                }
+            }
+
+            // ---------- 分组 3：生成参数 ----------
             item(key = "generationTitle") {
                 SmallTitle("生成参数")
             }

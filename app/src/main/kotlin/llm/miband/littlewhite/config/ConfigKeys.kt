@@ -49,6 +49,22 @@ object ConfigKeys {
     const val KEY_ENABLE_PREDICTIVE_BACK = "enable_predictive_back"
     const val KEY_PAGE_SCALE = "page_scale"
 
+    // ---------- 回答模式键 ----------
+
+    /** 回答模式取值：LLM 接管 */
+    const val VALUE_MODE_LLM = "llm"
+
+    /** 回答模式取值：小爱接管 */
+    const val VALUE_MODE_XIAOAI = "xiaoai"
+
+    const val KEY_DEFAULT_MODE = "default_mode"
+    const val KEY_XIAOAI_MODE_MS = "xiaoai_mode_ms"
+    const val KEY_LLM_MODE_MS = "llm_mode_ms"
+    const val KEY_CMD_TO_LLM = "cmd_to_llm"
+    const val KEY_CMD_TO_XIAOAI = "cmd_to_xiaoai"
+    /** 是否拦截 Template.General（米家/设备类文本），默认关闭 */
+    const val KEY_INTERCEPT_GENERAL = "intercept_general"
+
     // ---------- 默认值 ----------
     const val DEFAULT_ENABLED = true
 
@@ -119,6 +135,39 @@ object ConfigKeys {
 
     /** Monet 动态取色总开关默认关闭 */
     const val DEFAULT_MIUIX_MONET = false
+
+    // ---------- 回答模式默认值 ----------
+    /** 默认回答模式："llm"（LLM 接管）/"xiaoai"（小爱接管） */
+    const val DEFAULT_DEFAULT_MODE = "llm"
+
+    /** 切到小爱后的持续时长（毫秒）：10 分钟 */
+    const val DEFAULT_XIAOAI_MODE_MS = 600_000L
+
+    /** 切到 LLM 后的持续时长（毫秒）：0 = 永久（LLM 为默认模式，切回即长期） */
+    const val DEFAULT_LLM_MODE_MS = 0L
+
+    /** 切到 LLM 的默认指令词库（换行分隔） */
+    const val DEFAULT_CMD_TO_LLM =
+        "关闭小爱\n" +
+        "切换到LLM\n" +
+        "切到LLM\n" +
+        "开启AI\n" +
+        "换AI回答\n" +
+        "用AI回答\n" +
+        "开启大模型"
+
+    /** 切到小爱的默认指令词库（换行分隔） */
+    const val DEFAULT_CMD_TO_XIAOAI =
+        "开启小爱\n" +
+        "切换到小爱\n" +
+        "切到小爱\n" +
+        "关闭AI\n" +
+        "换回小爱\n" +
+        "用小爱回答\n" +
+        "关闭大模型"
+
+    /** 是否拦截 Template.General（米家/设备类文本）：默认不拦截，保证米家真实执行不受影响 */
+    const val DEFAULT_INTERCEPT_GENERAL = false
 
     // ---------- 视觉效果默认值（与 KernelSU 持久化默认一致） ----------
     const val DEFAULT_ENABLE_BLUR = false
