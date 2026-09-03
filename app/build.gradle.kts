@@ -29,6 +29,9 @@ android {
             // 现代 Xposed API 模块建议开启混淆以隐藏实现细节
             isMinifyEnabled = true
             isShrinkResources = false
+            // 复用 debug 签名（Android SDK 自带 debug.keystore，本地与 CI 均可用），
+            // 保证 Release 产物为已签名 APK，可直接安装。开源模块无需维护专属密钥。
+            signingConfig = signingConfigs.getByName("debug")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
