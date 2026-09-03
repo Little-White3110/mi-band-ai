@@ -1331,7 +1331,7 @@ private fun AboutTabContent(
                         },
                     )
                     Text(
-                        text = "环上LLM · 版本 0.1.0",
+                        text = "环上LLM · 版本 0.1.1",
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
                         fontSize = MiuixTheme.textStyles.body2.fontSize,
                         color = MiuixTheme.colorScheme.onSurfaceVariantSummary,

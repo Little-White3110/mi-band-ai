@@ -5,5 +5,5 @@ description=在小米运动健康 App 中拦截小爱 WebSocket 消息并替换�
 minApi=102
 minApiVersion=102
 targetApiVersion=102
-version=0.1.0
-versionCode=1
+version=0.1.1
+versionCode=2
