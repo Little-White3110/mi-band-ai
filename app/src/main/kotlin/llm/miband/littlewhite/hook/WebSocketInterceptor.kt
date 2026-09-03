@@ -289,7 +289,8 @@ class WebSocketMessageProcessor(private val config: ConfigStore) {
             LogCollector.i(tag, "模块未启用，Toast 透传 dialogId=$dialogId")
             return
         }
-        if (config.getApiKey().isBlank()) {
+        // 用手端小爱回答时无需自配 API Key；仅 DeepSeek 模式要求 Key
+        if (!config.getUsePhoneXiaoai() && config.getApiKey().isBlank()) {
             LogCollector.w(tag, "API Key 为空，Toast 透传 dialogId=$dialogId")
             return
         }
@@ -303,7 +304,13 @@ class WebSocketMessageProcessor(private val config: ConfigStore) {
         llmExecutor.execute {
             try {
                 LogCollector.i(tag, "调用 LLM 替换回答 dialogId=$dialogId query=${queryText.take(60)}")
-                val answer = LlmClient.ask(dialogId, queryText)
+                // 回答来源二选一：手端小爱(osbot) 或 自配 LLM(DeepSeek)
+                val answer = if (config.getUsePhoneXiaoai()) {
+                    val timeout = config.getTimeoutMs().toInt().coerceIn(3_000, 20_000)
+                    XiaoaiAgentClient.ask(queryText, timeout)
+                } else {
+                    LlmClient.ask(dialogId, queryText)
+                }
                 if (!answer.isNullOrBlank()) {
                     for (cb in replacementCallbacks) {
                         try {

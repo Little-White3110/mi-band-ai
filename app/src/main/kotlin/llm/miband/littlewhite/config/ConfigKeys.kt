@@ -72,6 +72,9 @@ object ConfigKeys {
     /** 是否拦截 Template.General（米家/设备类文本），默认关闭 */
     const val KEY_INTERCEPT_GENERAL = "intercept_general"
 
+    /** 是否把手环提问交给手机端超级小爱（osbot）处理；开启后不再使用自配 API */
+    const val KEY_USE_PHONE_XIAOAI = "use_phone_xiaoai"
+
     // ---------- 默认值 ----------
     const val DEFAULT_ENABLED = true
 
@@ -198,6 +201,9 @@ object ConfigKeys {
 
     /** 是否拦截 Template.General（米家/设备类文本）：默认不拦截，保证米家真实执行不受影响 */
     const val DEFAULT_INTERCEPT_GENERAL = false
+
+    /** 用手端小爱回答：默认关闭（保持现有 DeepSeek 行为，用户显式开启才走小爱） */
+    const val DEFAULT_USE_PHONE_XIAOAI = false
 
     // ---------- 视觉效果默认值（与 KernelSU 持久化默认一致） ----------
     const val DEFAULT_ENABLE_BLUR = false

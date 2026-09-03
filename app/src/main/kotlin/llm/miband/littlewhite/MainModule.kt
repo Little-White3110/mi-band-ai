@@ -8,6 +8,7 @@ import io.github.libxposed.api.XposedModuleInterface.PackageLoadedParam
 import llm.miband.littlewhite.config.ConfigStore
 import llm.miband.littlewhite.hook.LlmClient
 import llm.miband.littlewhite.hook.MiHealthHook
+import llm.miband.littlewhite.hook.VoiceAssistHook
 import llm.miband.littlewhite.log.LogCollector
 
 /**
@@ -34,11 +35,12 @@ class MainModule : XposedModule() {
     private var initialized = false
 
     /**
-     * 包加载回调：宿主进程加载每个包时触发（API 29+）。
-     * 只处理目标 App —— 小米运动健康（com.mi.health），安装 WebSocket 消息拦截层。
+     * 包加载回调：按宿主包名分发安装对应 Hook（API 29+ 触发）。
+     * - com.mi.health        -> MiHealthHook（手环 AIVS 拦截 + 回答替换，既有）
+     * - com.miui.voiceassist -> VoiceAssistHook（作为手机端小爱回答引擎，本次新增）
      */
     override fun onPackageLoaded(param: PackageLoadedParam) {
-        if (param.packageName != TARGET_PACKAGE) return
+        if (param.packageName != TARGET_MI_HEALTH && param.packageName != TARGET_VOICE_ASSIST) return
         log(Log.INFO, TAG, "目标包已加载: ${param.packageName}")
 
         // 确保配置/LlmClient 就绪（onModuleLoaded 若未先触发则在此补齐）
@@ -46,20 +48,23 @@ class MainModule : XposedModule() {
 
         // 尽量拿宿主 Context 落盘日志；拿不到时 LogCollector 退回内存+logcat，不影响主流程
         hostContext()?.let { LogCollector.init(it) }
-        // 延迟补偿宿主 Context 注入（init 时可能为 null，此时宿主 App 已完全启动，反射可获取到）
+        // 延迟补偿宿主 Context 注入
         LlmClient.setHostContext(hostContext())
 
         val cfg = config
         if (cfg == null) {
-            log(Log.ERROR, TAG, "配置初始化失败，无法安装 WebSocket 拦截层")
+            log(Log.ERROR, TAG, "配置初始化失败，无法安装 Hook")
             return
         }
         try {
-            // 安装拦截层：MiHealthHook 内部对新装逻辑均做了独立容错，失败不会外抛
-            MiHealthHook(this, cfg, param.getDefaultClassLoader()).install()
-            log(Log.INFO, TAG, "WebSocket 消息拦截层安装流程已触发")
+            val classLoader = param.getDefaultClassLoader()
+            when (param.packageName) {
+                TARGET_MI_HEALTH -> MiHealthHook(this, cfg, classLoader).install()
+                TARGET_VOICE_ASSIST -> VoiceAssistHook(this, cfg, classLoader).install()
+            }
+            log(Log.INFO, TAG, "${param.packageName} Hook 安装流程已触发")
         } catch (t: Throwable) {
-            log(Log.ERROR, TAG, "WebSocket 拦截层安装异常", t)
+            log(Log.ERROR, TAG, "${param.packageName} Hook 安装异常", t)
         }
     }
 
@@ -105,6 +110,9 @@ class MainModule : XposedModule() {
 
     private companion object {
         const val TAG = "环上LLM"
-        const val TARGET_PACKAGE = "com.mi.health"
+        /** 小米运动健康（手环 AIVS 宿主） */
+        const val TARGET_MI_HEALTH = "com.mi.health"
+        /** 超级小爱（手机端小爱回答引擎宿主） */
+        const val TARGET_VOICE_ASSIST = "com.miui.voiceassist"
     }
 }

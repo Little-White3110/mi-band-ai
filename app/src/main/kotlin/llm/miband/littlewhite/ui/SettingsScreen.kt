@@ -71,6 +71,8 @@ import llm.miband.littlewhite.config.ConfigStore
 import llm.miband.littlewhite.config.PresetManager
 import llm.miband.littlewhite.config.StatsStore
 import llm.miband.littlewhite.hook.LlmClient
+import llm.miband.littlewhite.hook.Bridge
+import androidx.compose.runtime.LaunchedEffect
 import llm.miband.littlewhite.log.LogCollector
 import llm.miband.littlewhite.ui.VisualPrefs
 import top.yukonga.miuix.kmp.basic.BasicComponent
@@ -339,6 +341,24 @@ private fun StatusTabContent(
     // 重启二次确认弹窗
     var showRestartDialog by remember { mutableStateOf(false) }
 
+    // 手机端小爱(osbot)桥服务端运行状态
+    var xiaoaiStatus by remember { mutableStateOf<XiaoaiStatus?>(null) }
+    var xiaoaiChecked by remember { mutableStateOf(false) }
+    var showRestartVA by remember { mutableStateOf(false) }
+    var restartingVA by remember { mutableStateOf(false) }
+    // 查询 voiceassist 侧桥状态：连不上即代表未运行 / 进程被系统回收
+    fun refreshXiaoai() {
+        xiaoaiChecked = false
+        uiScope.launch(Dispatchers.IO) {
+            val raw = Bridge.requestStatus()
+            withContext(Dispatchers.Main) {
+                xiaoaiStatus = parseXiaoaiStatus(raw)
+                xiaoaiChecked = true
+            }
+        }
+    }
+    LaunchedEffect(Unit) { refreshXiaoai() }
+
     // 异常容错读取框架信息（未绑定时为默认占位）
     val frameworkName = remember { runCatching { service?.frameworkName }.getOrNull() ?: "LSPosed" }
     val frameworkVersion = remember { runCatching { service?.frameworkVersion }.getOrNull() ?: "?" }
@@ -517,6 +537,55 @@ private fun StatusTabContent(
                 }
             }
 
+            // ---------- 手机端小爱 (osbot 回答引擎) ----------
+            item(key = "xiaoaiTitle") {
+                Spacer(modifier = Modifier.height(8.dp))
+                SmallTitle("手机端小爱 (osbot)")
+            }
+            item(key = "xiaoai") {
+                Card(modifier = Modifier.padding(horizontal = 12.dp)) {
+                    val st = xiaoaiStatus
+                    val running = st?.running == true
+                    val connected = st?.connected == true
+                    InfoRow(
+                        label = "com.miui.voiceassist",
+                        value = if (xiaoaiChecked) (if (running) "桥已就绪" else "桥未运行") else "检测中…",
+                        tag = when {
+                            !xiaoaiChecked -> "检测中"
+                            running -> "Hook 运行中"
+                            else -> "未运行"
+                        },
+                        tagBg = when {
+                            !xiaoaiChecked -> MiuixTheme.colorScheme.tertiaryContainer
+                            running -> MiuixTheme.colorScheme.primaryContainer
+                            else -> MiuixTheme.colorScheme.errorContainer
+                        },
+                        tagFg = MiuixTheme.colorScheme.onPrimaryContainer,
+                    )
+                    HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+                    InfoRow(
+                        label = "osbot 通道",
+                        value = st?.agent?.takeIf { it.isNotBlank() } ?: "-",
+                        tag = if (connected) "已连接" else "未连接",
+                        tagBg = if (connected) MiuixTheme.colorScheme.primaryContainer else MiuixTheme.colorScheme.errorContainer,
+                        tagFg = MiuixTheme.colorScheme.onPrimaryContainer,
+                    )
+                    HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+                    ArrowPreference(
+                        title = "刷新状态",
+                        summary = "重新探测 osbot 桥服务端是否在线",
+                        onClick = { refreshXiaoai() },
+                    )
+                    HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+                    ArrowPreference(
+                        title = "重启超级小爱",
+                        summary = if (restartingVA) "正在重启…" else "以 Root 强制停止，系统会自动重启并重建 osbot 桥",
+                        enabled = !restartingVA,
+                        onClick = { showRestartVA = true },
+                    )
+                }
+            }
+
             // ---------- 快速操作 ----------
             item(key = "quickTitle") {
                 Spacer(modifier = Modifier.height(8.dp))
@@ -629,6 +698,52 @@ private fun StatusTabContent(
             )
         }
     }
+
+    // 重启超级小爱二次确认对话框
+    OverlayDialog(
+        show = showRestartVA,
+        title = "重启超级小爱",
+        summary = "将以 Root 强制停止 com.miui.voiceassist，系统会自动重启其常驻进程并重建 osbot 桥服务端",
+        onDismissRequest = { showRestartVA = false },
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            TextButton(
+                text = "取消",
+                modifier = Modifier.weight(1f),
+                onClick = { showRestartVA = false },
+            )
+            TextButton(
+                text = "确认重启",
+                modifier = Modifier.weight(1f),
+                colors = ButtonDefaults.textButtonColorsPrimary(),
+                onClick = {
+                    showRestartVA = false
+                    restartingVA = true
+                    uiScope.launch(Dispatchers.IO) {
+                        val ok = restartVoiceAssistWithRoot()
+                        withContext(Dispatchers.Main) {
+                            restartingVA = false
+                            Toast.makeText(
+                                context,
+                                if (ok) "已重启超级小爱，稍后 osbot 桥会自动重建" else "重启失败：请检查 Root 授权",
+                                Toast.LENGTH_SHORT,
+                            ).show()
+                        }
+                        // 重启后等待常驻进程带起 + 注入重建桥，再刷新状态
+                        kotlinx.coroutines.delay(8000)
+                        val raw = Bridge.requestStatus()
+                        withContext(Dispatchers.Main) {
+                            xiaoaiStatus = parseXiaoaiStatus(raw)
+                            xiaoaiChecked = true
+                        }
+                    }
+                },
+            )
+        }
+    }
 }
 
 /** 目标应用包名（重启/状态展示统一使用） */
@@ -655,6 +770,41 @@ private fun restartAppWithRoot(packageName: String): Boolean {
     } catch (_: Throwable) {
         false
     }
+}
+
+/** 超级小爱包名（osbot 回答引擎宿主） */
+private const val VOICE_ASSIST_PACKAGE = "com.miui.voiceassist"
+
+/** voiceassist 侧 osbot 桥服务端运行状态 */
+private data class XiaoaiStatus(val running: Boolean, val connected: Boolean, val agent: String)
+
+/** 解析桥状态行 "STATUS|started=..|connected=..|agent=.."；null/非法 → 未运行 */
+private fun parseXiaoaiStatus(raw: String?): XiaoaiStatus {
+    if (raw == null || !raw.startsWith("STATUS")) return XiaoaiStatus(false, false, "")
+    val kv = raw.split("|").drop(1).mapNotNull {
+        val i = it.indexOf('=')
+        if (i < 0) null else it.substring(0, i) to it.substring(i + 1)
+    }.toMap()
+    return XiaoaiStatus(
+        running = kv["started"] == "true",
+        connected = kv["connected"] == "true",
+        agent = kv["agent"].orEmpty(),
+    )
+}
+
+/**
+ * 以 Root 强制停止超级小爱。其常驻子进程会被系统重启并带起主进程，
+ * 注入代码随之重建 osbot 桥服务端（voiceassist 无 LAUNCHER，故不用 monkey 拉起）。
+ */
+private fun restartVoiceAssistWithRoot(): Boolean = try {
+    val process = ProcessBuilder("su", "-c", "am force-stop $VOICE_ASSIST_PACKAGE")
+        .redirectErrorStream(true)
+        .start()
+    process.inputStream.bufferedReader().use { it.readText() }
+    process.waitFor(10, TimeUnit.SECONDS)
+    process.exitValue() == 0
+} catch (_: Throwable) {
+    false
 }
 
 /**
@@ -824,6 +974,16 @@ private fun ConfigTabContent(
                             onCheckedChange = {
                                 enabled = it
                                 config.setEnabled(it)
+                            },
+                        )
+                        var usePhoneXiaoai by remember { mutableStateOf(config.getUsePhoneXiaoai()) }
+                        SwitchPreference(
+                            title = "用手端小爱回答",
+                            summary = "开启后手环提问转交手机端超级小爱(osbot)处理，无需配置 API；关闭则用上方 Base URL/模型",
+                            checked = usePhoneXiaoai,
+                            onCheckedChange = {
+                                usePhoneXiaoai = it
+                                config.setUsePhoneXiaoai(it)
                             },
                         )
                         var apiTypeIndex by remember {

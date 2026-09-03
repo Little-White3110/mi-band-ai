@@ -320,7 +320,8 @@ class MiHealthHook(
 
         // 前置条件：模块启用 / 已配置 API Key / 已记录到识别文本
         if (!config.isEnabled()) return null
-        if (config.getApiKey().isBlank()) return null
+        // 手端小爱模式无需 API Key
+        if (!config.getUsePhoneXiaoai() && config.getApiKey().isBlank()) return null
         if (processor.getPendingQuery(dialogId).isNullOrBlank()) return null
 
         // 多 Hook 点（主文本层 + 方案 C readInstruction）可能命中同一条 Toast，

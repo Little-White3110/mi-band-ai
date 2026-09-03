@@ -38,6 +38,7 @@ apk/
 mihealth-reversed/
 tools/
 *.zip.tmp
+.pentest
 
 # 日志与导出
 logs/

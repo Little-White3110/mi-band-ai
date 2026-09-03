@@ -179,6 +179,10 @@ class ConfigStore private constructor(private val prefs: SharedPreferences) {
     fun getInterceptGeneral(): Boolean =
         prefs.getBoolean(ConfigKeys.KEY_INTERCEPT_GENERAL, ConfigKeys.DEFAULT_INTERCEPT_GENERAL)
 
+    /** 是否把手环提问交给手机端超级小爱（osbot）处理 */
+    fun getUsePhoneXiaoai(): Boolean =
+        prefs.getBoolean(ConfigKeys.KEY_USE_PHONE_XIAOAI, ConfigKeys.DEFAULT_USE_PHONE_XIAOAI)
+
     /** 多行指令词串拆分为非空列表（trim + 去空） */
     private fun splitCommandWords(raw: String): List<String> =
         raw.lineSequence().map { it.trim() }.filter { it.isNotEmpty() }.toList()
@@ -392,6 +396,11 @@ class ConfigStore private constructor(private val prefs: SharedPreferences) {
     /** 设置是否拦截 Template.General（米家/设备类文本） */
     fun setInterceptGeneral(v: Boolean) {
         prefs.edit().putBoolean(ConfigKeys.KEY_INTERCEPT_GENERAL, v).apply()
+    }
+
+    /** 设置是否用手端小爱回答 */
+    fun setUsePhoneXiaoai(v: Boolean) {
+        prefs.edit().putBoolean(ConfigKeys.KEY_USE_PHONE_XIAOAI, v).apply()
     }
 
     // ==================== 变更监听 ====================
