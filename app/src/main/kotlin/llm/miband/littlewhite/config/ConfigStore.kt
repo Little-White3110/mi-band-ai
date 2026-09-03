@@ -127,6 +127,18 @@ class ConfigStore private constructor(private val prefs: SharedPreferences) {
     fun getMaxTokens(): Int =
         prefs.getInt(ConfigKeys.KEY_MAX_TOKENS, ConfigKeys.DEFAULT_MAX_TOKENS)
 
+    /**
+     * 思考模式专用的最大生成 Token 数。
+     * 推理 token 计入 max_tokens 总额，思考模式需要远大于普通模式的预算，故独立配置。
+     */
+    fun getThinkingMaxTokens(): Int =
+        prefs.getInt(ConfigKeys.KEY_THINKING_MAX_TOKENS, ConfigKeys.DEFAULT_THINKING_MAX_TOKENS)
+            .coerceAtLeast(1)
+
+    /** 思考模式专用的请求超时（毫秒），返回 Long 兼容上层时间计算 */
+    fun getThinkingTimeoutMs(): Long =
+        prefs.getInt(ConfigKeys.KEY_THINKING_TIMEOUT_MS, ConfigKeys.DEFAULT_THINKING_TIMEOUT_MS).toLong()
+
     // ==================== 回答模式 ====================
 
     /** 默认回答模式："llm"（LLM 接管）/"xiaoai"（小爱接管） */
@@ -334,6 +346,16 @@ class ConfigStore private constructor(private val prefs: SharedPreferences) {
 
     fun setMaxTokens(v: Int) {
         prefs.edit().putInt(ConfigKeys.KEY_MAX_TOKENS, v).apply()
+    }
+
+    /** 思考模式专用的最大生成 Token 数 */
+    fun setThinkingMaxTokens(v: Int) {
+        prefs.edit().putInt(ConfigKeys.KEY_THINKING_MAX_TOKENS, v.coerceAtLeast(1)).apply()
+    }
+
+    /** 思考模式专用的请求超时（毫秒） */
+    fun setThinkingTimeoutMs(v: Int) {
+        prefs.edit().putInt(ConfigKeys.KEY_THINKING_TIMEOUT_MS, v.coerceAtLeast(1000)).apply()
     }
 
     // ==================== 回答模式写入器 ====================

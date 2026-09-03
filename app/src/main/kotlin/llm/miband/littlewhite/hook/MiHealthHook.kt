@@ -346,9 +346,15 @@ class MiHealthHook(
         try {
             // 触发后台 LLM 任务（processor 在单线程池内执行 LlmClient.ask）
             processor.process(msg)
-            // 阻塞等待：上限取配置超时与 MAX_WAIT_MS 的较小者，避免拖垮 WebSocket 读取线程
-            val timeoutMs = config.getTimeoutMs().coerceIn(1000L, MAX_WAIT_MS)
-            latch.await(timeoutMs, TimeUnit.MILLISECONDS)
+            // 阻塞等待：思考模式下 LLM 需要更长生成时间，等待窗口改用思考模式专属超时
+            // （LlmClient 侧使用同一配置），避免答案尚未返回就被判定超时；
+            // 上限 MAX_WAIT_MS 保护 WebSocket 读取线程不被拖垮。
+            val waitMs = if (config.isThinkingMode()) {
+                config.getThinkingTimeoutMs()
+            } else {
+                config.getTimeoutMs()
+            }.coerceIn(1000L, MAX_WAIT_MS)
+            latch.await(waitMs, TimeUnit.MILLISECONDS)
         } catch (t: Throwable) {
             LogCollector.e(tag, "等待 LLM 替换结果异常", t)
         } finally {

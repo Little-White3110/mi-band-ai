@@ -26,6 +26,12 @@ object ConfigKeys {
     const val KEY_MAX_TOKENS = "max_tokens"
     const val KEY_APPEND_API_PATH = "append_api_path"
 
+    /** 思考模式专用的最大生成 Token 数（独立于普通模式的 max_tokens） */
+    const val KEY_THINKING_MAX_TOKENS = "thinking_max_tokens"
+
+    /** 思考模式专用的请求超时（毫秒），独立于普通模式的 timeout_ms */
+    const val KEY_THINKING_TIMEOUT_MS = "thinking_timeout_ms"
+
     /** 主题模式：与 Miuix ColorSchemeMode 枚举名对应，String 存储避免依赖 ui 包 */
     const val KEY_THEME_MODE = "theme_mode"
 
@@ -121,6 +127,19 @@ object ConfigKeys {
 
     /** 最大生成 Token 数 */
     const val DEFAULT_MAX_TOKENS = 200
+
+    /**
+     * 思考模式默认最大生成 Token 数。
+     * 推理（reasoning）token 同样计入 max_tokens 总额，普通模式的 200 会被思考过程耗尽，
+     * 导致正式答案来不及生成即被截断，故思考模式默认给足预算。
+     */
+    const val DEFAULT_THINKING_MAX_TOKENS = 2048
+
+    /**
+     * 思考模式默认请求超时（毫秒）。思考模式生成更慢，需给足时间；
+     * 实际等待窗口由 MiHealthHook 再 clamp 到 MAX_WAIT_MS（15s），避免拖垮 WebSocket 读取线程。
+     */
+    const val DEFAULT_THINKING_TIMEOUT_MS = 14000
 
     /** 默认主题模式：system（跟随系统深浅色，无动态取色） */
     const val DEFAULT_THEME_MODE = "system"

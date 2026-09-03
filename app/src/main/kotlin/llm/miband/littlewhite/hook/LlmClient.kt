@@ -44,6 +44,11 @@ object LlmClient {
     /** 调用历史保留上限 */
     private const val MAX_CALL_LOGS = 200
 
+    private const val ANSWER_RESERVE_TOKENS = 512
+
+    /** Anthropic 思考预算下限（budget_tokens） */
+    private const val MIN_THINKING_BUDGET_TOKENS = 1024
+
     /** 配置读取器：由 [init] 注入，未初始化前 [ask] 直接返回 null */
     private var config: ConfigStore? = null
 
@@ -433,12 +438,17 @@ object LlmClient {
         val temperature = if (thinkingOn && deepSeekStyle) null else cfg.getTemperature()
         val topP = if (thinkingOn && deepSeekStyle) null else cfg.getTopP()
 
+        // 思考模式下推理 token 计入 max_tokens 总额且生成更慢：抬高上限与超时下限，
+        // 否则预算会被思考过程耗尽，正式答案被截断（content 为空，只剩 reasoning_content）
+        val maxTokens = resolveMaxTokens(cfg, thinkingOn)
+        val timeoutMs = resolveTimeoutMs(cfg, thinkingOn)
+
         val body = OpenAiRequestBody(
             model = cfg.getModel(),
             messages = messages,
             temperature = temperature,
             topP = topP,
-            maxTokens = cfg.getMaxTokens().coerceAtLeast(1),
+            maxTokens = maxTokens,
             stream = false, // 非流式，一次取回完整回答
             topK = cfg.getTopK()?.takeIf { it > 0 }, // 未设置或 <=0 则省略 top_k
             thinking = if (deepSeekStyle) OpenAiThinking(type = if (thinkingOn) "enabled" else "disabled") else null,
@@ -454,35 +464,41 @@ object LlmClient {
                 "Content-Type" to "application/json",
             ),
             body = bodyJson,
-            timeoutMs = cfg.getTimeoutMs(),
+            timeoutMs = timeoutMs,
         ) ?: return null
 
         return try {
             val resp = json.decodeFromString(OpenAiResponseBody.serializer(), response)
-            val message = resp.choices.firstOrNull()?.message
+            val choice = resp.choices.firstOrNull()
+            val message = choice?.message
             if (message == null) {
                 LogCollector.e(TAG, "OpenAI 响应缺少 choices[0].message，原文=${truncate(response)}")
                 return null
             }
-            // 思考模式开启时记录推理过程（DeepSeek V4 返回 reasoning_content 字段）
+            // 仅记录推理过程，绝不作为回答内容（DeepSeek 的 reasoning_content 字段）
             val reasoningEnabled = cfg.isThinkingMode()
             if (reasoningEnabled && !message.reasoningContent.isNullOrBlank()) {
                 LogCollector.i(TAG, "reasoning_content: ${truncate(message.reasoningContent!!)}")
             }
+            // 输出被 max_tokens 截断：答案不完整，记 WARN 提示调大 max_tokens
+            if (choice.finishReason == "length") {
+                LogCollector.w(TAG, "OpenAI 输出被 max_tokens 截断（finish_reason=length），建议调大 max_tokens")
+            }
 
             val usage = resp.usage
             val content = message.content?.trim()
-            val reasoning = message.reasoningContent?.trim()
-            val text = when {
-                !content.isNullOrEmpty() -> content
-                !reasoning.isNullOrEmpty() -> {
-                    LogCollector.w(TAG, "OpenAI 响应 content 为空，回退使用 reasoning_content")
-                    reasoning
-                }
-                else -> {
-                    LogCollector.e(TAG, "OpenAI 响应 message 无可用文本，原文=${truncate(response)}")
-                    null
-                }
+            val text = if (content.isNullOrEmpty()) {
+                // content 为空说明答案被推理过程耗尽或响应异常。此处绝不回退使用
+                // reasoning_content —— 思考过程是内部推理，不能作为回答展示给用户，
+                // 直接放弃替换（保留小爱原始 Toast）才是正确行为。
+                LogCollector.w(
+                    TAG,
+                    "OpenAI 响应 content 为空（思考预算耗尽或异常），放弃替换；" +
+                        "reasoning=${message.reasoningContent?.length ?: 0}字，原文=${truncate(response)}",
+                )
+                null
+            } else {
+                content
             }
             RequestResult(
                 text = text,
@@ -517,7 +533,6 @@ object LlmClient {
         // Anthropic 官方 API 不接受 messages 内出现 system 角色，需拆到顶层 system 字段
         val system = messages.firstOrNull { it.role == "system" }?.content
         val chatMessages = messages.filterNot { it.role == "system" }
-        val maxTokens = cfg.getMaxTokens().coerceAtLeast(1)
 
         // DeepSeek Anthropic 兼容端点同样支持思考模式（标准 thinking 块 + 特有 output_config.effort）
         val thinkingOn = cfg.isThinkingMode()
@@ -528,6 +543,10 @@ object LlmClient {
         val temperature = if (thinkingOn) null else cfg.getTemperature()
         val topP = if (thinkingOn) null else cfg.getTopP()
 
+        // 思考模式下推理 token 计入 max_tokens，且 Anthropic 要求 budget_tokens < max_tokens
+        val maxTokens = resolveMaxTokens(cfg, thinkingOn)
+        val timeoutMs = resolveTimeoutMs(cfg, thinkingOn)
+
         val body = AnthropicRequestBody(
             model = cfg.getModel(),
             messages = chatMessages,
@@ -536,7 +555,14 @@ object LlmClient {
             topP = topP,
             topK = cfg.getTopK()?.takeIf { it > 0 }, // 未设置或 <=0 则省略 top_k
             system = system?.takeIf { it.isNotBlank() },
-            thinking = if (thinkingOn) AnthropicThinking(budgetTokens = maxTokens) else null,
+            thinking = if (thinkingOn) {
+                // 预算 = 总上限 - 回答预留，保证 budget_tokens 严格小于 max_tokens
+                AnthropicThinking(
+                    budgetTokens = (maxTokens - ANSWER_RESERVE_TOKENS).coerceAtLeast(MIN_THINKING_BUDGET_TOKENS),
+                )
+            } else {
+                null
+            },
             // DeepSeek Anthropic 兼容端点的思考强度控制字段（仅思考模式 + DeepSeek 时发送）
             outputConfig = if (thinkingOn && deepSeekStyle) {
                 AnthropicOutputConfig(effort = cfg.getReasoningEffort())
@@ -555,12 +581,13 @@ object LlmClient {
                 "Content-Type" to "application/json",
             ),
             body = bodyJson,
-            timeoutMs = cfg.getTimeoutMs(),
+            timeoutMs = timeoutMs,
         ) ?: return null
 
         return try {
             val resp = json.decodeFromString(AnthropicResponseBody.serializer(), response)
-            // content 为块数组：可能是 [thinking, text]，取第一个 text 块作为回答
+            // content 为块数组：可能是 [thinking, text]，只取 text 块作为回答，
+            // thinking 块仅记录日志，绝不作为回答内容
             var answer: String? = null
             for (block in resp.content) {
                 when (block.type) {
@@ -588,6 +615,23 @@ object LlmClient {
             null
         }
     }
+
+    // ==================== 思考模式参数解析 ====================
+
+    /**
+     * 解析实际 max_tokens：思考模式使用独立配置的 [ConfigStore.getThinkingMaxTokens]。
+     * 推理 token 同样计入 max_tokens 总额，思考模式需要远大于普通模式的预算，
+     * 否则预算会被思考过程耗尽，正式答案来不及生成即被截断（content 为空）。
+     */
+    private fun resolveMaxTokens(cfg: ConfigStore, thinkingOn: Boolean): Int =
+        if (thinkingOn) cfg.getThinkingMaxTokens() else cfg.getMaxTokens().coerceAtLeast(1)
+
+    /**
+     * 解析实际请求超时：思考模式使用独立配置的 [ConfigStore.getThinkingTimeoutMs]。
+     * 思考模式生成更慢，需给足时间，避免答案尚未生成就被判定超时。
+     */
+    private fun resolveTimeoutMs(cfg: ConfigStore, thinkingOn: Boolean): Long =
+        if (thinkingOn) cfg.getThinkingTimeoutMs() else cfg.getTimeoutMs()
 
     // ==================== 底层 HTTP 请求 ====================
 
@@ -694,6 +738,8 @@ private data class OpenAiResponseMessage(
 @Serializable
 private data class OpenAiChoice(
     val message: OpenAiResponseMessage? = null,
+    /** 结束原因：length 表示输出被 max_tokens 截断，答案不完整 */
+    @SerialName("finish_reason") val finishReason: String? = null,
 )
 
 @Serializable

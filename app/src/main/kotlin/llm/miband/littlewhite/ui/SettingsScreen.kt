@@ -1022,6 +1022,20 @@ private fun ConfigTabContent(
                             initialValue = config.getMaxTokens(),
                             onValueChange = { config.setMaxTokens(it) },
                         )
+                        // 思考模式专属参数：推理 token 计入 max_tokens 总额且生成更慢，
+                        // 需独立于普通模式的预算与超时，故仅在思考模式开启时暴露
+                        if (thinkingMode) {
+                            NumberInputField(
+                                label = "思考模式超时（毫秒）",
+                                initialValue = config.getThinkingTimeoutMs().toInt(),
+                                onValueChange = { config.setThinkingTimeoutMs(it) },
+                            )
+                            NumberInputField(
+                                label = "思考模式最大 Token",
+                                initialValue = config.getThinkingMaxTokens(),
+                                onValueChange = { config.setThinkingMaxTokens(it) },
+                            )
+                        }
                     }
                     PresetSection(
                         category = PresetManager.CATEGORY_GENERATION,

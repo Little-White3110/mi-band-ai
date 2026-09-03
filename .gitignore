@@ -16,6 +16,7 @@ build/
 .vscode/
 .DS_Store
 .trae
+.workbuddy
 
 # ==================== Android ====================
 local.properties

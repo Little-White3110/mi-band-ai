@@ -122,6 +122,8 @@ object PresetManager {
             ConfigKeys.KEY_SYSTEM_PROMPT to config.getSystemPrompt(),
             ConfigKeys.KEY_TIMEOUT_MS to config.getTimeoutMs().toString(),
             ConfigKeys.KEY_MAX_TOKENS to config.getMaxTokens().toString(),
+            ConfigKeys.KEY_THINKING_TIMEOUT_MS to config.getThinkingTimeoutMs().toString(),
+            ConfigKeys.KEY_THINKING_MAX_TOKENS to config.getThinkingMaxTokens().toString(),
         )
         CATEGORY_SESSION -> linkedMapOf(
             ConfigKeys.KEY_CONTEXT_MODE to config.getContextMode(),
@@ -163,6 +165,10 @@ object PresetManager {
                 ConfigKeys.KEY_SYSTEM_PROMPT -> config.setSystemPrompt(value)
                 ConfigKeys.KEY_TIMEOUT_MS -> config.setTimeoutMs(value.toIntOrNull() ?: ConfigKeys.DEFAULT_TIMEOUT_MS)
                 ConfigKeys.KEY_MAX_TOKENS -> config.setMaxTokens(value.toIntOrNull() ?: ConfigKeys.DEFAULT_MAX_TOKENS)
+                ConfigKeys.KEY_THINKING_TIMEOUT_MS ->
+                    config.setThinkingTimeoutMs(value.toIntOrNull() ?: ConfigKeys.DEFAULT_THINKING_TIMEOUT_MS)
+                ConfigKeys.KEY_THINKING_MAX_TOKENS ->
+                    config.setThinkingMaxTokens(value.toIntOrNull() ?: ConfigKeys.DEFAULT_THINKING_MAX_TOKENS)
                 ConfigKeys.KEY_CONTEXT_MODE -> config.setContextMode(value)
                 ConfigKeys.KEY_CONTEXT_WINDOW_MS ->
                     config.setContextWindowMs(value.toIntOrNull() ?: ConfigKeys.DEFAULT_CONTEXT_WINDOW_MS)
