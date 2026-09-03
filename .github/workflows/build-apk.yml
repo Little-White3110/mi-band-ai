@@ -1,0 +1,87 @@
+name: Build APK
+
+on:
+  push:
+    branches: [ "main", "master" ]
+    tags: [ "v*" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+# 打 tag（v*）时需要写 Release 权限
+permissions:
+  contents: write
+
+# 同一分支/PR 的新提交会自动取消上一次进行中的构建
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build APK
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      # 项目 compileSdk = 37（android-37 平台），runner 预装 SDK 通常不含，需手动安装
+      - name: Install Android SDK Platform 37
+        run: |
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          "$SDKMANAGER" --install "platforms;android-37"
+          yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
+
+      # 官方 Gradle 配置 + 依赖缓存，加速重复构建
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build Debug & Release APKs
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug assembleRelease
+
+      - name: Upload Debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: mi-band-ai-debug
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+
+      - name: Upload Release APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: mi-band-ai-release
+          path: app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
+
+  # 推送 v* 标签时，把构建产物发布为 GitHub Release
+  release:
+    name: Create GitHub Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Debug APK
+        uses: actions/download-artifact@v4
+        with:
+          name: mi-band-ai-debug
+          path: apk/debug
+
+      - name: Download Release APK
+        uses: actions/download-artifact@v4
+        with:
+          name: mi-band-ai-release
+          path: apk/release
+
+      - name: Publish Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: apk/**/*.apk
+          generate_release_notes: true
