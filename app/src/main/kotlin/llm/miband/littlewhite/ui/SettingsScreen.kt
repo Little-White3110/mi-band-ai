@@ -30,7 +30,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
-import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
@@ -121,6 +121,11 @@ import llm.miband.littlewhite.ui.component.FloatingBottomBarItem
  * 0=状态 1=配置 2=统计 3=关于
  *
  * @param binding LSPosed Service 绑定信息；为 null 表示未检测到框架，显示提示
+ * @param pagerState Pager 状态（由外层提升注入：主题切换动画会重建本页面组合，
+ *                   状态提升到 AnimatedContent 之外以保持 Tab 位置存活）
+ * @param showThemePage 是否显示主题设置二级页（同样提升注入，避免切换主题后被踢回主页）
+ * @param onOpenThemePage 打开主题设置页
+ * @param onCloseThemePage 关闭主题设置页
  * @param onThemeModeChange 主题模式变更回调（持久化 + 驱动 AppTheme 重建）
  * @param onKeyColorChange Monet 种子色变更回调
  * @param onPaletteStyleChange 调色板风格变更回调
@@ -129,6 +134,10 @@ import llm.miband.littlewhite.ui.component.FloatingBottomBarItem
 @Composable
 fun SettingsScreen(
     binding: LsposedBinding?,
+    pagerState: PagerState,
+    showThemePage: Boolean,
+    onOpenThemePage: () -> Unit,
+    onCloseThemePage: () -> Unit,
     onThemeModeChange: (String) -> Unit = {},
     onKeyColorChange: (Long) -> Unit = {},
     onPaletteStyleChange: (ThemePaletteStyle) -> Unit = {},
@@ -142,20 +151,26 @@ fun SettingsScreen(
     StatsStore.init(context)
     val scope = rememberCoroutineScope()
 
-    var showThemePage by remember { mutableStateOf(false) }
-
     val config = binding?.config
+
+    data class TabInfo(val label: String, val icon: ImageVector)
+    val tabs = listOf(
+        TabInfo("状态", MiuixIcons.Home),
+        TabInfo("配置", MiuixIcons.Settings),
+        TabInfo("统计", MiuixIcons.Info),
+        TabInfo("关于", MiuixIcons.Edit),
+    )
 
     // 主题设置页时拦截系统返回：回到主设置页而非直接退出
     BackHandler(enabled = showThemePage && config != null) {
-        showThemePage = false
+        onCloseThemePage()
     }
 
     // 主题设置页需要 config 才能操作
     if (showThemePage && config != null) {
         ThemeSettingsScreen(
             config = config,
-            onBack = { showThemePage = false },
+            onBack = onCloseThemePage,
             onThemeModeChange = onThemeModeChange,
             onKeyColorChange = onKeyColorChange,
             onPaletteStyleChange = onPaletteStyleChange,
@@ -166,16 +181,6 @@ fun SettingsScreen(
         )
         return
     }
-
-    val pagerState = rememberPagerState(initialPage = 0) { 4 }
-
-    data class TabInfo(val label: String, val icon: ImageVector)
-    val tabs = listOf(
-        TabInfo("状态", MiuixIcons.Home),
-        TabInfo("配置", MiuixIcons.Settings),
-        TabInfo("统计", MiuixIcons.Info),
-        TabInfo("关于", MiuixIcons.Edit),
-    )
 
     // 视觉效果（从 CompositionLocal 读取，由 SettingsActivity 提供）
     val enableBlur = LocalEnableBlur.current
@@ -297,7 +302,7 @@ fun SettingsScreen(
                     0 -> StatusTabContent(binding = binding, context = context, contentPadding = contentPadding)
                     1 -> ConfigTabContent(config = config, context = context, scope = scope, contentPadding = contentPadding)
                     2 -> StatsTabContent(context = context, scope = scope, contentPadding = contentPadding)
-                    3 -> AboutTabContent(config = config, context = context, scope = scope, contentPadding = contentPadding, onOpenThemePage = { showThemePage = true })
+                    3 -> AboutTabContent(config = config, context = context, scope = scope, contentPadding = contentPadding, onOpenThemePage = onOpenThemePage)
                 }
             }
         }

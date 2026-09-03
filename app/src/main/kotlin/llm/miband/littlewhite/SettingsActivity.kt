@@ -5,6 +5,8 @@ import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
@@ -47,11 +49,19 @@ data class LsposedBinding(val service: XposedService, val config: ConfigStore)
 class SettingsActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // 启用 edge-to-edge：状态栏/导航栏透明，背景与 Miuix surface 融为一体；
+        // 状态栏图标反色由 AppTheme 按明暗模式显式控制
+        enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         LogCollector.init(applicationContext)
 
         setContent {
             val binding = rememberLsposedBinding()
+
+            // 提升 Pager 与主题页状态到 AppTheme（AnimatedContent）之外：
+            // 主题切换动画会重建页面组合，放在这里确保 Tab 位置与二级页状态不丢失。
+            val pagerState = rememberPagerState(initialPage = 0) { 4 }
+            var showThemePage by remember { mutableStateOf(false) }
 
             // 响应式主题状态：从配置读取，用户切换时驱动 AppTheme 重建
             var themeMode by remember { mutableStateOf(ColorSchemeMode.System) }
@@ -100,6 +110,10 @@ class SettingsActivity : ComponentActivity() {
                 ) {
                     SettingsScreen(
                         binding = binding,
+                        pagerState = pagerState,
+                        showThemePage = showThemePage,
+                        onOpenThemePage = { showThemePage = true },
+                        onCloseThemePage = { showThemePage = false },
                         onThemeModeChange = { newMode ->
                             binding?.config?.setThemeMode(newMode)
                             themeMode = resolveThemeMode(newMode, miuixMonet)
