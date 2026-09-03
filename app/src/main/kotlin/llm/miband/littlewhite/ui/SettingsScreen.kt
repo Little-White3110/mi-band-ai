@@ -3,8 +3,11 @@
 package llm.miband.littlewhite.ui
 
 import android.content.Context
+import android.content.Intent
 import android.graphics.Paint
+import android.net.Uri
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -14,6 +17,8 @@ import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
+import androidx.core.content.FileProvider
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -49,6 +54,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.libxposed.service.HookedTarget
@@ -66,8 +72,6 @@ import llm.miband.littlewhite.ui.VisualPrefs
 import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.Badge
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
-import top.yukonga.miuix.kmp.basic.FloatingNavigationBar
-import top.yukonga.miuix.kmp.basic.FloatingNavigationBarItem
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.CardDefaults
 import top.yukonga.miuix.kmp.basic.HorizontalDivider
@@ -82,6 +86,8 @@ import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.basic.VerticalScrollBar
 import top.yukonga.miuix.kmp.basic.rememberScrollBarAdapter
+import top.yukonga.miuix.kmp.blur.layerBackdrop
+import top.yukonga.miuix.kmp.blur.rememberLayerBackdrop
 import top.yukonga.miuix.kmp.interfaces.ExperimentalScrollBarApi
 import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.extended.Close
@@ -92,7 +98,6 @@ import top.yukonga.miuix.kmp.icon.extended.Ok
 import top.yukonga.miuix.kmp.icon.extended.Settings
 import top.yukonga.miuix.kmp.overlay.OverlayDialog
 import top.yukonga.miuix.kmp.theme.MiuixTheme
-import top.yukonga.miuix.kmp.theme.MiuixTheme.isDynamicColor
 import top.yukonga.miuix.kmp.theme.ThemeColorSpec
 import top.yukonga.miuix.kmp.theme.ThemePaletteStyle
 import top.yukonga.miuix.kmp.preference.ArrowPreference
@@ -106,6 +111,8 @@ import llm.miband.littlewhite.ui.LocalEnableFloatingBarBlur
 import llm.miband.littlewhite.ui.LocalEnableNavigationBadge
 import llm.miband.littlewhite.ui.LocalPageScale
 import llm.miband.littlewhite.ui.rememberBlurBackdrop
+import llm.miband.littlewhite.ui.component.FloatingBottomBar
+import llm.miband.littlewhite.ui.component.FloatingBottomBarItem
 
 /**
  * 环上LLM —— 完整设置页（参考 KernelSU Manager 设计风格）。
@@ -128,6 +135,7 @@ fun SettingsScreen(
     onColorSpecChange: (ThemeColorSpec) -> Unit = {},
     onMiuixMonetChange: (Boolean) -> Unit = {},
     onVisualPrefsChange: (VisualPrefs) -> Unit = {},
+    onEnablePredictiveBackChange: (Boolean) -> Unit = {},
 ) {
     val context = LocalContext.current
     PresetManager.init(context)
@@ -137,6 +145,11 @@ fun SettingsScreen(
     var showThemePage by remember { mutableStateOf(false) }
 
     val config = binding?.config
+
+    // 主题设置页时拦截系统返回：回到主设置页而非直接退出
+    BackHandler(enabled = showThemePage && config != null) {
+        showThemePage = false
+    }
 
     // 主题设置页需要 config 才能操作
     if (showThemePage && config != null) {
@@ -149,6 +162,7 @@ fun SettingsScreen(
             onColorSpecChange = onColorSpecChange,
             onMiuixMonetChange = onMiuixMonetChange,
             onVisualPrefsChange = onVisualPrefsChange,
+            onEnablePredictiveBackChange = onEnablePredictiveBackChange,
         )
         return
     }
@@ -169,14 +183,21 @@ fun SettingsScreen(
     val enableFloatingBarBlur = LocalEnableFloatingBarBlur.current
     val enableNavBadge = LocalEnableNavigationBadge.current
     val pageScale = LocalPageScale.current
-    val backdrop = rememberBlurBackdrop(enableBlur)
-    val blurActive = backdrop != null
+    // 顶部栏模糊 backdrop（参考 KernelSU：blur 开启且支持时非空）
+    val blurBackdrop = rememberBlurBackdrop(enableBlur)
+    val blurActive = blurBackdrop != null
     val barColor = if (blurActive) Color.Transparent else MiuixTheme.colorScheme.surface
+    // 悬浮底栏玻璃效果 backdrop（参考 KernelSU：始终创建，pager 内容挂在上面）
+    val floatingSurface = MiuixTheme.colorScheme.surface
+    val floatingBackdrop = rememberLayerBackdrop {
+        drawRect(floatingSurface)
+        drawContent()
+    }
 
     Scaffold(
         topBar = {
             if (blurActive) {
-                BlurredBar(backdrop) {
+                BlurredBar(blurBackdrop) {
                     SmallTopAppBar(title = "环上LLM", color = barColor)
                 }
             } else {
@@ -185,29 +206,34 @@ fun SettingsScreen(
         },
         bottomBar = {
             if (enableFloatingBar) {
-                // 悬浮胶囊底部导航栏（玻璃效果时透明 + 模糊）
-                if (enableFloatingBarBlur && blurActive) {
-                    BlurredBar(backdrop, blurActive = enableFloatingBarBlur) {
-                        FloatingNavigationBar(color = Color.Transparent) {
-                            tabs.forEachIndexed { i, tab ->
-                                FloatingNavigationBarItem(
-                                    selected = pagerState.currentPage == i,
-                                    onClick = { scope.launch { pagerState.animateScrollToPage(i) } },
-                                    icon = tab.icon,
-                                    label = tab.label,
+                // 悬浮胶囊底部导航栏（居中显示，参考 KernelSU FloatingBottomBar）
+                Box(
+                    modifier = Modifier.fillMaxWidth(),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    FloatingBottomBar(
+                        modifier = Modifier.padding(bottom = 12.dp),
+                        selectedIndex = { pagerState.currentPage },
+                        onSelected = { scope.launch { pagerState.animateScrollToPage(it) } },
+                        backdrop = floatingBackdrop,
+                        tabsCount = tabs.size,
+                        isBlurEnabled = enableFloatingBarBlur,
+                    ) {
+                        tabs.forEachIndexed { i, tab ->
+                            FloatingBottomBarItem(
+                                onClick = { scope.launch { pagerState.animateScrollToPage(i) } },
+                                modifier = Modifier.defaultMinSize(minWidth = 76.dp),
+                            ) {
+                                Icon(imageVector = tab.icon, contentDescription = tab.label)
+                                Text(
+                                    text = tab.label,
+                                    fontSize = 11.sp,
+                                    lineHeight = 14.sp,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    overflow = TextOverflow.Visible,
                                 )
                             }
-                        }
-                    }
-                } else {
-                    FloatingNavigationBar {
-                        tabs.forEachIndexed { i, tab ->
-                            FloatingNavigationBarItem(
-                                selected = pagerState.currentPage == i,
-                                onClick = { scope.launch { pagerState.animateScrollToPage(i) } },
-                                icon = tab.icon,
-                                label = tab.label,
-                            )
                         }
                     }
                 }
@@ -221,10 +247,13 @@ fun SettingsScreen(
                              label = tab.label,
                              badge = {
                                  if (enableNavBadge && i == 0) {
-                                     // 状态 Tab 显示连接状态角标
-                                     val badgeColor = if (binding != null) Color(0xFF4CAF50) else Color(0xFF9E9E9E)
+                                     // 状态 Tab 显示连接状态角标：已连接用绿色，未连接用 error
                                      Badge(
-                                         containerColor = badgeColor,
+                                         containerColor = if (binding != null) {
+                                             Color(0xFF4CAF50)
+                                         } else {
+                                             MiuixTheme.colorScheme.error
+                                         },
                                          modifier = Modifier.size(8.dp),
                                      )
                                  }
@@ -244,12 +273,26 @@ fun SettingsScreen(
         Box(
             modifier = Modifier
                 .fillMaxSize()
+                .then(
+                    // 顶部栏模糊：把内容绘制到 blur backdrop 上，顶栏才能模糊到滚动内容
+                    if (blurActive) Modifier.layerBackdrop(blurBackdrop!!) else Modifier
+                )
                 .graphicsLayer {
                     scaleX = pageScale
                     scaleY = pageScale
                 },
         ) {
-            HorizontalPager(state = pagerState) { page ->
+            // 悬浮底栏玻璃效果：把 Pager 内容绘制到浮动底栏 backdrop 上
+            HorizontalPager(
+                state = pagerState,
+                modifier = Modifier.then(
+                    if (enableFloatingBar && enableFloatingBarBlur) {
+                        Modifier.layerBackdrop(floatingBackdrop)
+                    } else {
+                        Modifier
+                    }
+                ),
+            ) { page ->
                 when (page) {
                     0 -> StatusTabContent(binding = binding, context = context, contentPadding = contentPadding)
                     1 -> ConfigTabContent(config = config, context = context, scope = scope, contentPadding = contentPadding)
@@ -290,17 +333,9 @@ private fun StatusTabContent(
     // 是否已激活（Service 绑定成功）
     val activated = binding != null
 
-    // 配色（参考 KernelSU StatusCard）：未激活用红色系，激活用绿色系
-    val cardBg = when {
-        !activated -> if (isDynamicColor) MiuixTheme.colorScheme.errorContainer else Color(0xFFF8D7DA)
-        isDynamicColor -> MiuixTheme.colorScheme.secondaryContainer
-        else -> Color(0xFFDFFAE4)
-    }
-    val cardFg = when {
-        !activated -> if (isDynamicColor) MiuixTheme.colorScheme.onErrorContainer else Color(0xFF8B1A1A)
-        isDynamicColor -> MiuixTheme.colorScheme.onSecondaryContainer
-        else -> Color(0xFF1A3825)
-    }
+    // 大卡片配色（恢复原经典配色，与动态取色无关）：未激活浅红，激活浅绿
+    val cardBg = if (!activated) Color(0xFFF8D7DA) else Color(0xFFDFFAE4)
+    val cardFg = if (!activated) Color(0xFF8B1A1A) else Color(0xFF1A3825)
     val tagColor = MiuixTheme.colorScheme.secondaryContainer
     val tagTextColor = MiuixTheme.colorScheme.onSecondaryContainer
 
@@ -340,12 +375,10 @@ private fun StatusTabContent(
                                 Icon(
                                     modifier = Modifier.size(110.dp),
                                     imageVector = if (activated) MiuixIcons.Ok else MiuixIcons.Close,
-                                    tint = if (!activated) {
-                                        if (isDynamicColor) MiuixTheme.colorScheme.error.copy(alpha = 0.8f) else Color(0xFFE53935)
-                                    } else if (isDynamicColor) {
-                                        MiuixTheme.colorScheme.primary.copy(alpha = 0.8f)
-                                    } else {
+                                    tint = if (activated) {
                                         Color(0xFF36D167)
+                                    } else {
+                                        MiuixTheme.colorScheme.error.copy(alpha = 0.8f)
                                     },
                                     contentDescription = null,
                                 )
@@ -917,13 +950,35 @@ private fun AboutTabContent(
                 Card(modifier = Modifier.padding(horizontal = 12.dp)) {
                     ArrowPreference(
                         title = "导出日志",
-                        summary = "导出当前日志文件到应用缓存目录",
+                        summary = "通过系统分享发送日志文件",
                         onClick = {
                             scope.launch(Dispatchers.IO) {
                                 val file = LogCollector.exportLogFile()
                                 withContext(Dispatchers.Main) {
                                     if (file != null) {
-                                        Toast.makeText(context, "日志已导出：${file.absolutePath}", Toast.LENGTH_LONG).show()
+                                        // 通过 FileProvider 生成 content:// Uri，交给系统分享
+                                        val uri = runCatching {
+                                            FileProvider.getUriForFile(
+                                                context,
+                                                "${context.packageName}.fileprovider",
+                                                file,
+                                            )
+                                        }.getOrNull()
+                                        if (uri != null) {
+                                            val share = Intent(Intent.ACTION_SEND).apply {
+                                                type = "text/plain"
+                                                putExtra(Intent.EXTRA_STREAM, uri)
+                                                putExtra(Intent.EXTRA_TEXT, "环上LLM 日志文件")
+                                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                            }
+                                            runCatching {
+                                                context.startActivity(Intent.createChooser(share, "分享日志"))
+                                            }.onFailure {
+                                                Toast.makeText(context, "未找到可分享的应用", Toast.LENGTH_SHORT).show()
+                                            }
+                                        } else {
+                                            Toast.makeText(context, "日志导出失败", Toast.LENGTH_SHORT).show()
+                                        }
                                     } else {
                                         Toast.makeText(context, "日志导出失败", Toast.LENGTH_SHORT).show()
                                     }
@@ -959,6 +1014,16 @@ private fun AboutTabContent(
                                     }
                                     Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
                                 }
+                            }
+                        },
+                    )
+                    ArrowPreference(
+                        title = "项目地址",
+                        summary = "https://github.com/Little-White3110/mi-band-ai",
+                        onClick = {
+                            runCatching {
+                                val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/Little-White3110/mi-band-ai"))
+                                context.startActivity(intent)
                             }
                         },
                     )
@@ -1171,6 +1236,7 @@ private fun NumberInputField(
         singleLine = true,
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
         modifier = Modifier
+            .fillMaxWidth()
             .padding(horizontal = 8.dp, vertical = 6.dp),
     )
 }
@@ -1197,6 +1263,7 @@ private fun NullableIntInputField(
         singleLine = true,
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
         modifier = Modifier
+            .fillMaxWidth()
             .padding(horizontal = 8.dp, vertical = 6.dp),
     )
 }
@@ -1223,6 +1290,7 @@ private fun DecimalInputField(
         singleLine = true,
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
         modifier = Modifier
+            .fillMaxWidth()
             .padding(horizontal = 8.dp, vertical = 6.dp),
     )
 }

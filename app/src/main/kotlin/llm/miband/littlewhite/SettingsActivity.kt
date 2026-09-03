@@ -1,5 +1,7 @@
 package llm.miband.littlewhite
 
+import android.content.pm.ApplicationInfo
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -76,6 +78,10 @@ class SettingsActivity : ComponentActivity() {
                         enableNavigationBadge = cfg.isEnableNavigationBadge(),
                         pageScale = cfg.getPageScale(),
                     )
+                    // 预测性返回（API 33+）：同步到 Activity（反射设置隐藏 API，参考 KernelSU）
+                    if (Build.VERSION.SDK_INT >= 33) {
+                        setEnableOnBackInvokedCallbackCompat(cfg.isEnablePredictiveBack())
+                    }
                 }
             }
 
@@ -127,6 +133,14 @@ class SettingsActivity : ComponentActivity() {
                             // 更新响应式状态，驱动 SettingsScreen 重组
                             visualPrefs = prefs
                         },
+                        onEnablePredictiveBackChange = { enabled ->
+                            // 持久化 + 同步到 Activity（API 33+，参考 KernelSU：设置后重建生效）
+                            binding?.config?.setEnablePredictiveBack(enabled)
+                            if (Build.VERSION.SDK_INT >= 33) {
+                                setEnableOnBackInvokedCallbackCompat(enabled)
+                                recreate()
+                            }
+                        },
                     )
                 }
             }
@@ -167,6 +181,22 @@ class SettingsActivity : ComponentActivity() {
             ThemeColorSpec.valueOf(raw ?: "")
         } catch (_: Exception) {
             ThemeColorSpec.Spec2021
+        }
+    }
+
+    /**
+     * 运行时切换预测性返回（API 33+）。
+     * 反射调用 ApplicationInfo.setEnableOnBackInvokedCallback（隐藏 API，参考 KernelSU）。
+     * 切换后需重建 Activity 才能完全生效。
+     */
+    private fun setEnableOnBackInvokedCallbackCompat(enable: Boolean) {
+        runCatching {
+            val method = ApplicationInfo::class.java.getDeclaredMethod(
+                "setEnableOnBackInvokedCallback",
+                Boolean::class.javaPrimitiveType,
+            )
+            method.isAccessible = true
+            method.invoke(applicationInfo, enable)
         }
     }
 }

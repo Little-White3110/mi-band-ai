@@ -80,6 +80,7 @@ fun ThemeSettingsScreen(
     onColorSpecChange: (ThemeColorSpec) -> Unit,
     onMiuixMonetChange: (Boolean) -> Unit,
     onVisualPrefsChange: (VisualPrefs) -> Unit = {},
+    onEnablePredictiveBackChange: (Boolean) -> Unit = {},
 ) {
     val monet = config.isMiuixMonet()
     // 当前基础模式索引（0=System, 1=Light, 2=Dark），忽略 Monet 偏移
@@ -177,7 +178,6 @@ fun ThemeSettingsScreen(
                                 MiuixIcons.Theme,
                                 modifier = Modifier.padding(end = 6.dp),
                                 contentDescription = "动态取色",
-                                tint = MiuixTheme.colorScheme.onBackground,
                             )
                         },
                         checked = monet,
@@ -276,7 +276,6 @@ fun ThemeSettingsScreen(
                                     MiuixIcons.Background,
                                     modifier = Modifier.padding(end = 6.dp),
                                     contentDescription = "模糊效果",
-                                    tint = MiuixTheme.colorScheme.onBackground,
                                 )
                             },
                             checked = enableBlur,
@@ -348,7 +347,11 @@ fun ThemeSettingsScreen(
                                 )
                             },
                             checked = enablePredictiveBack,
-                            onCheckedChange = { enablePredictiveBack = it; config.setEnablePredictiveBack(it) },
+                            onCheckedChange = {
+                                enablePredictiveBack = it
+                                config.setEnablePredictiveBack(it)
+                                onEnablePredictiveBackChange(it)
+                            },
                         )
                     }
 
@@ -363,7 +366,6 @@ fun ThemeSettingsScreen(
                                 MiuixIcons.ZoomOut,
                                 modifier = Modifier.padding(end = 6.dp),
                                 contentDescription = "页面缩放",
-                                tint = MiuixTheme.colorScheme.onBackground,
                             )
                         },
                         endActions = {
@@ -486,7 +488,7 @@ private fun ThemePreviewCard(
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(0.5.dp)
-                            .background(textColor.copy(alpha = 0.1f)),
+                            .background(MiuixTheme.colorScheme.dividerLine),
                     )
                     Row(
                         modifier = Modifier
