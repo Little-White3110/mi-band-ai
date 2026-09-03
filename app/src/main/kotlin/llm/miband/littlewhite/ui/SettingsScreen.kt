@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Paint
 import android.net.Uri
+import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Canvas
@@ -529,6 +530,22 @@ private fun StatusTabContent(
                             }
                         },
                     )
+                    HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+                    ArrowPreference(
+                        title = "自启动设置",
+                        summary = "为小米运动健康开启自启动权限，保证后台常驻",
+                        onClick = {
+                            openAutoStartSettings(context, TARGET_APP_PACKAGE)
+                        },
+                    )
+                    HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+                    ArrowPreference(
+                        title = "省电策略设置",
+                        summary = "设置小米运动健康的省电策略，避免后台被系统限制",
+                        onClick = {
+                            openBatteryOptimizationSettings(context, TARGET_APP_PACKAGE)
+                        },
+                    )
                 }
             }
 
@@ -633,6 +650,59 @@ private fun restartAppWithRoot(packageName: String): Boolean {
     } catch (_: Throwable) {
         false
     }
+}
+
+/**
+ * 跳转系统「自启动设置」。
+ *
+ * 优先尝试 MIUI/HyperOS 安全中心的自启动管理页（方便为指定应用开启自启动），
+ * 无法解析时回退到系统应用详情页（多数系统在此页提供自启动入口）。
+ * 全部失败时给出 Toast 提示，不抛出异常。
+ */
+private fun openAutoStartSettings(context: Context, packageName: String) {
+    // MIUI/HyperOS 自启动管理（com.miui.securitycenter 的 AutoStart 管理 Activity）
+    val miuiIntent = Intent("miui.intent.action.OP_AUTO_START")
+    // 通用回退：系统应用详情页
+    val detailsIntent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+        data = Uri.parse("package:$packageName")
+    }
+    if (launchFirstAvailable(context, miuiIntent, detailsIntent)) return
+    Toast.makeText(context, "未找到自启动设置入口", Toast.LENGTH_SHORT).show()
+}
+
+/**
+ * 跳转系统「省电策略设置」。
+ *
+ * 优先尝试系统电池优化设置页，无法解析时回退到系统应用详情页，
+ * 多数系统（含 MIUI/HyperOS）的应用详情页内置「省电策略/电池」入口。
+ */
+private fun openBatteryOptimizationSettings(context: Context, packageName: String) {
+    // 通用电池优化设置（Android 系统设置，可选择忽略优化）
+    val batteryIntent = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+    // 通用回退：系统应用详情页（含省电策略入口）
+    val detailsIntent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+        data = Uri.parse("package:$packageName")
+    }
+    if (launchFirstAvailable(context, batteryIntent, detailsIntent)) return
+    Toast.makeText(context, "未找到省电策略设置入口", Toast.LENGTH_SHORT).show()
+}
+
+/**
+ * 依次尝试启动 Intent，返回是否有一个成功启动。
+ * 需要以 Activity 上下文启动，故加上 NEW_TASK 标志以防缺少 Activity 栈。
+ */
+private fun launchFirstAvailable(context: Context, vararg intents: Intent): Boolean {
+    for (intent in intents) {
+        try {
+            if (intent.resolveActivity(context.packageManager) != null) {
+                context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                return true
+            }
+        } catch (_: Throwable) {
+            // 尝试下一个候选
+        }
+    }
+    return false
 }
 
 /** 信息行：标签 + 值 + 状态标签 */
