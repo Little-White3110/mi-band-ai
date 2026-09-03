@@ -9,12 +9,12 @@ import java.util.concurrent.atomic.AtomicReference
 /**
  * 手机端小爱「快速模式」回答引擎（voiceassist 主进程内，A 方案真注入 + 流式捕获）。
  *
- * 注入：把系统提示词拼进 query 前缀（小爱 Nlp.Request 无 system_prompt 字段，只能并入文本），
- *       反射 v51.m0.sendNlpRequest(m0.e().setQuery(prefixed).setIsAddQueryCard(false).build())。
- * 捕获：hook ic1.a.sendStreamData，按 dialog_id 聚合流式 markdown_text，遇 <FINAL> 完成；
- *       结果做 markdown 清洗 + 长度截断，保证手环小屏能显示。
- *
- * 手环提问串行，单等待槽。任一环节失败返回 null，由 mi.health 侧回退放行原始 Toast。
+ * 注入：把系统提示词拼进 query 前缀，反射 v51.m0.sendNlpRequest(...setIsAddQueryCard(false))。
+ * 捕获（双路径，取先拿到内容者）：
+ *   - n31.o0.H0(Instruction)：AIVS 入站分发（UI 之前），后台也能收到云端回流 → onToast
+ *   - ic1.a.sendStreamData：RN bridge 渲染层（前台才有完整分片）→ onStreamData
+ *   两者都汇入 feedChunk 按 dialog_id 聚合 markdown_text，遇 <FINAL> 或够长完成。
+ * 结果做 HTML/markdown 清洗 + 截断，保证手环小屏能显示。
  */
 object FastXiaoaiEngine {
 
@@ -23,8 +23,6 @@ object FastXiaoaiEngine {
     const val INJECTION_READY = true
 
     private const val WAIT_MS = 15_000L
-
-    /** 手环小屏可显示的回答长度上限（超出截断） */
     private const val MAX_ANSWER_LEN = 100
 
     private var classLoader: ClassLoader? = null
@@ -35,6 +33,7 @@ object FastXiaoaiEngine {
         val dialog = AtomicReference<String?>(null)
         val sb = StringBuilder()
         val result = AtomicReference<String?>(null)
+        @Volatile var inputQuery: String = ""
     }
 
     private val waiter = AtomicReference<Waiter?>(null)
@@ -44,32 +43,30 @@ object FastXiaoaiEngine {
         config = cfg
     }
 
-    /** 由 sendStreamData hook 调用：解析 ToastStream 分片并按 dialog_id 聚合 */
-    fun onStreamData(json: String?) {
-        if (json.isNullOrBlank() || !json.contains("ToastStream")) return
+    /** 共享聚合：按注入后首个 dialog_id 累积分片，<FINAL> 或够长即完成；跳过回显首片 */
+    private fun feedChunk(dialogId: String, text: String?) {
         val w = waiter.get() ?: return
-        try {
-            val root = org.json.JSONObject(json)
-            val header = root.optJSONObject("header") ?: return
-            val dialogId = header.optString("dialog_id", "")
-            val payload = root.optJSONObject("payload") ?: return
-            val md = payload.optString("markdown_text", "")
-            val cur = w.dialog.get()
-            if (cur == null) {
-                if (dialogId.isEmpty()) return
-                w.dialog.set(dialogId)
-            } else if (cur != dialogId) {
-                return
-            }
-            when {
-                md == "<FINAL>" -> finish(w)
-                md.isNotEmpty() -> {
-                    w.sb.append(md)
-                    // 累积足够长即提前完成，避免长回答拖慢与刷屏
-                    if (w.sb.length >= MAX_ANSWER_LEN) finish(w)
+        if (dialogId.isEmpty() || text == null) return
+        val cur = w.dialog.get()
+        if (cur == null) w.dialog.set(dialogId) else if (cur != dialogId) return
+        // 手机端会把注入的 query 作为首个分片回显；累积前若首片包含原始问题，判为回显丢弃
+        if (w.sb.isEmpty() && w.inputQuery.isNotEmpty() && text.contains(w.inputQuery)) {
+            LogCollector.i(TAG, "跳过回显分片 len=${text.length}")
+            return
+        }
+        LogCollector.i(TAG, "chunk dlg=${dialogId.take(8)} len=${text.length} t=${text.take(40)}")
+        when {
+            text == "<FINAL>" -> finish(w)
+            text.isNotEmpty() -> {
+                w.sb.append(text)
+                val s = w.sb
+                // 够长、或已累积成句且以句末标点收尾，即完成（后台常无独立 <FINAL> 分片）
+                if (s.length >= MAX_ANSWER_LEN ||
+                    (s.length >= 24 && s.last() in "。！？!?")
+                ) {
+                    finish(w)
                 }
             }
-        } catch (_: Throwable) {
         }
     }
 
@@ -77,6 +74,25 @@ object FastXiaoaiEngine {
         if (w.result.get() != null) return
         w.result.set(cleanAndTruncate(w.sb.toString()))
         w.latch.countDown()
+    }
+
+    /** H0 入站路径：fullName 以 Template 开头时投递（ToastStream 分片 / Toast 单条） */
+    fun onToast(fullName: String?, dialogId: String?, text: String?) {
+        if (fullName == null || !fullName.startsWith("Template")) return
+        feedChunk(dialogId.orEmpty(), text)
+    }
+
+    /** sendStreamData 渲染层路径：解析 ToastStream JSON 分片 */
+    fun onStreamData(json: String?) {
+        if (json.isNullOrBlank() || !json.contains("ToastStream")) return
+        try {
+            val root = org.json.JSONObject(json)
+            val header = root.optJSONObject("header") ?: return
+            val dialogId = header.optString("dialog_id", "")
+            val md = root.optJSONObject("payload")?.optString("markdown_text", "")
+            feedChunk(dialogId, md)
+        } catch (_: Throwable) {
+        }
     }
 
     /** 去 HTML 标签与 markdown 符号、折叠空白、截断到手环可显示长度 */
@@ -95,6 +111,7 @@ object FastXiaoaiEngine {
         val cl = classLoader ?: return null
         if (query.isBlank()) return null
         val w = Waiter()
+        w.inputQuery = query
         waiter.set(w)
         try {
             if (!inject(cl, query)) {

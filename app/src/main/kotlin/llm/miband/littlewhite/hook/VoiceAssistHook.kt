@@ -50,10 +50,51 @@ class VoiceAssistHook(
     }
 
     /**
-     * hook 手机端 RN bridge ic1.a.sendStreamData(type, data)，捕获 Template.ToastStream 流式分片，
-     * 交给 FastXiaoaiEngine 按 dialog_id 聚合。只读放行，绝不改变原调用。
+     * 安装 fast 捕获：双路径汇入 FastXiaoaiEngine 聚合。
+     * - n31.o0.H0(Instruction)：AIVS 入站分发（UI 之前），后台也能拿到云端回流；
+     * - ic1.a.sendStreamData：RN bridge 渲染层（前台完整分片）。
+     * 均只读放行，绝不改变原调用。
      */
     private fun installToastCapture() {
+        installAivsInboundCapture()
+        installSendStreamDataCapture()
+    }
+
+    private fun installAivsInboundCapture() {
+        try {
+            val o0 = classLoader.loadClass("n31.o0")
+            val instr = classLoader.loadClass("com.xiaomi.ai.api.common.Instruction")
+            val m = o0.getDeclaredMethod("H0", instr)
+            module.hook(m)
+                .setPriority(XposedInterface.PRIORITY_DEFAULT)
+                .setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE)
+                .intercept(XposedInterface.Hooker { chain ->
+                    try {
+                        val ins = chain.getArgs()[0]
+                        if (ins != null) {
+                            val fullName = ins.javaClass.getMethod("getFullName").invoke(ins) as? String
+                            if (fullName != null && fullName.startsWith("Template")) {
+                                val dialogId = optionalGet(
+                                    ins.javaClass.getMethod("getDialogId").invoke(ins),
+                                )
+                                val payload = ins.javaClass.getMethod("getPayload").invoke(ins)
+                                val text = payload?.let {
+                                    tryGetStr(it, "getMarkdownText") ?: tryGetStr(it, "getText")
+                                }
+                                FastXiaoaiEngine.onToast(fullName, dialogId, text)
+                            }
+                        }
+                    } catch (_: Throwable) {
+                    }
+                    chain.proceed()
+                })
+            LogCollector.i(tag, "fast 入站捕获已安装(n31.o0.H0)")
+        } catch (t: Throwable) {
+            LogCollector.e(tag, "n31.o0.H0 捕获安装失败", t)
+        }
+    }
+
+    private fun installSendStreamDataCapture() {
         try {
             val bridge = classLoader.loadClass("ic1.a")
             val m = bridge.getDeclaredMethod(
@@ -72,10 +113,25 @@ class VoiceAssistHook(
                     }
                     chain.proceed()
                 })
-            LogCollector.i(tag, "fast 流式捕获 hook 已安装(ic1.a.sendStreamData)")
+            LogCollector.i(tag, "fast 渲染层捕获已安装(ic1.a.sendStreamData)")
         } catch (t: Throwable) {
-            LogCollector.e(tag, "fast 流式捕获 hook 安装失败(fast 档将降级)", t)
+            LogCollector.e(tag, "ic1.a.sendStreamData 捕获安装失败", t)
         }
+    }
+
+    /** 反射取 com.xiaomi.common.Optional.get() 的字符串值 */
+    private fun optionalGet(opt: Any?): String? = try {
+        if (opt == null) null
+        else opt.javaClass.getMethod("get").invoke(opt)?.toString()
+    } catch (_: Throwable) {
+        null
+    }
+
+    /** 反射取无参 String getter，失败返回 null */
+    private fun tryGetStr(obj: Any, method: String): String? = try {
+        obj.javaClass.getMethod(method).invoke(obj) as? String
+    } catch (_: Throwable) {
+        null
     }
 
     /** 取当前进程名：优先 Application.getProcessName()，回退 /proc/self/cmdline；失败返回 null */
