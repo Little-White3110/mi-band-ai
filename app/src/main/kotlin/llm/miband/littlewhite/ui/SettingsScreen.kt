@@ -59,6 +59,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.libxposed.service.HookedTarget
 import io.github.libxposed.service.XposedService
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -325,6 +326,12 @@ private fun StatusTabContent(
 ) {
     val service = binding?.service
     val listState = rememberLazyListState()
+    // 协程作用域（与上方读取 scope 列表的局部变量区分命名）
+    val uiScope = rememberCoroutineScope()
+    // 是否正在执行 Root 重启
+    var restarting by remember { mutableStateOf(false) }
+    // 重启二次确认弹窗
+    var showRestartDialog by remember { mutableStateOf(false) }
 
     // 异常容错读取框架信息（未绑定时为默认占位）
     val frameworkName = remember { runCatching { service?.frameworkName }.getOrNull() ?: "LSPosed" }
@@ -525,6 +532,29 @@ private fun StatusTabContent(
                 }
             }
 
+            // ---------- 重启目标应用（需 Root） ----------
+            item(key = "restartTitle") {
+                Spacer(modifier = Modifier.height(8.dp))
+                SmallTitle("目标应用")
+            }
+            item(key = "restart") {
+                Card(modifier = Modifier.padding(horizontal = 12.dp)) {
+                    ArrowPreference(
+                        title = "重启小米运动健康",
+                        summary = if (restarting) {
+                            "正在以 Root 权限重启…"
+                        } else {
+                            "以 Root 权限强制重启 com.mi.health，使模块 Hook 立即生效"
+                        },
+                        enabled = !restarting,
+                        onClick = {
+                            // 二次确认后再执行 Root 重启
+                            showRestartDialog = true
+                        },
+                    )
+                }
+            }
+
             item(key = "bottomSpacer") {
                 Spacer(modifier = Modifier.height(12.dp))
             }
@@ -537,6 +567,71 @@ private fun StatusTabContent(
                 .fillMaxHeight(),
             trackPadding = contentPadding,
         )
+    }
+
+    // 重启二次确认对话框（StatusTabContent 位于 SettingsScreen 的 Scaffold 内，满足 Overlay 宿主要求）
+    OverlayDialog(
+        show = showRestartDialog,
+        title = "重启小米运动健康",
+        summary = "将以 Root 权限强制重启 com.mi.health，模块 Hook 会重新加载生效",
+        onDismissRequest = { showRestartDialog = false },
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            TextButton(
+                text = "取消",
+                modifier = Modifier.weight(1f),
+                onClick = { showRestartDialog = false },
+            )
+            TextButton(
+                text = "确认重启",
+                modifier = Modifier.weight(1f),
+                colors = ButtonDefaults.textButtonColorsPrimary(),
+                onClick = {
+                    showRestartDialog = false
+                    restarting = true
+                    uiScope.launch(Dispatchers.IO) {
+                        val ok = restartAppWithRoot(TARGET_APP_PACKAGE)
+                        withContext(Dispatchers.Main) {
+                            restarting = false
+                            Toast.makeText(
+                                context,
+                                if (ok) "已重启小米运动健康" else "重启失败：请检查 Root 授权",
+                                Toast.LENGTH_SHORT,
+                            ).show()
+                        }
+                    }
+                },
+            )
+        }
+    }
+}
+
+/** 目标应用包名（重启/状态展示统一使用） */
+private const val TARGET_APP_PACKAGE = "com.mi.health"
+
+/**
+ * 以 Root 权限强制重启目标应用（com.mi.health）。
+ *
+ * 通过 su 执行 am force-stop 强制停止目标应用，等待短暂时间后
+ * 使用 monkey 重新拉起其 Launcher Activity，使模块 Hook 重新注入生效。
+ * Root 不可用或授权被拒时返回 false。
+ */
+private fun restartAppWithRoot(packageName: String): Boolean {
+    return try {
+        // su -c 直接执行合并命令；失败（无 Root/授权被拒）时 exit code 非 0
+        val process = ProcessBuilder("su", "-c", "am force-stop $packageName && sleep 1 && monkey -p $packageName -c android.intent.category.LAUNCHER 1")
+            .redirectErrorStream(true)
+            .start()
+        // 读取输出，避免管道缓冲阻塞；最多等待 15s
+        val output = process.inputStream.bufferedReader().use { it.readText() }
+        process.waitFor(15, TimeUnit.SECONDS)
+        // force-stop 成功 + monkey 注入事件成功才算重启完成
+        process.exitValue() == 0 && output.contains("Events injected: 1")
+    } catch (_: Throwable) {
+        false
     }
 }
 
@@ -1143,14 +1238,16 @@ private fun PresetSection(
             Spacer(modifier = Modifier.height(12.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 TextButton(
                     text = "取消",
+                    modifier = Modifier.weight(1f),
                     onClick = { showSaveDialog = false },
                 )
                 TextButton(
                     text = "保存",
+                    modifier = Modifier.weight(1f),
                     colors = ButtonDefaults.textButtonColorsPrimary(),
                     onClick = {
                         val name = saveName.trim()
